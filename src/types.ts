@@ -15,6 +15,7 @@ export const DEFAULT_WATCH_ATTRIBUTES = Object.freeze([
 export type SentinelReason =
   | "protected-element-added"
   | "protected-element-removed"
+  | "protected-element-unmatched"
   | "attribute-changed"
   | "text-changed"
   | "risky-element-added";

@@ -175,10 +175,12 @@ export function createSentinel(options: SentinelOptions): SentinelController {
 
   const reportRemoved = (node: Node): void => {
     for (const element of elementsIn(node)) {
+      baselineRisky.delete(element);
+      seenRisky.delete(element);
+      lastStates.delete(element);
       for (const rule of options.rules) {
         const active = activeRules.get(element);
         if (!active?.has(rule.id) || !fingerprints.get(element)?.has(rule.id)) continue;
-        if (!element.matches(rule.selector)) continue;
         active.delete(rule.id);
         emit(element, "protected-element-removed", rule.id, rule.selector, "removed");
       }
@@ -219,11 +221,42 @@ export function createSentinel(options: SentinelOptions): SentinelController {
   const findRoot = (element: Element): Element | undefined =>
     roots.find((root) => root === element || root.contains(element));
 
+  const updateSelectorMembership = (subtree: Element): void => {
+    if (!findRoot(subtree)) return;
+    const candidates = [subtree, ...subtree.querySelectorAll("*")];
+    for (const element of candidates) {
+      for (const rule of options.rules) {
+        const active = activeRules.get(element);
+        const isActive = active?.has(rule.id) ?? false;
+        const matches = element.matches(rule.selector);
+        if (matches && !isActive) {
+          const known = fingerprints.get(element)?.has(rule.id) ?? false;
+          if (!known) {
+            storeBaseline(element, rule);
+          } else {
+            let activeSet = activeRules.get(element);
+            if (!activeSet) {
+              activeSet = new Set();
+              activeRules.set(element, activeSet);
+            }
+            activeSet.add(rule.id);
+          }
+          lastStates.get(element)?.clear();
+          emit(element, "protected-element-added", rule.id, rule.selector, "selector-matched");
+        } else if (!matches && isActive) {
+          active?.delete(rule.id);
+          lastStates.get(element)?.clear();
+          emit(element, "protected-element-unmatched", rule.id, rule.selector, "selector-unmatched");
+        }
+      }
+    }
+  };
+
   const processAttribute = (record: MutationRecord, element: Element): void => {
     const attribute = record.attributeName;
     if (!attribute) return;
     for (const rule of options.rules) {
-      if (!element.matches(rule.selector) || !activeRules.get(element)?.has(rule.id)) continue;
+      if (!activeRules.get(element)?.has(rule.id)) continue;
       if (!watchedAttributes(rule).includes(attribute)) continue;
       const baseline = fingerprints.get(element)?.get(rule.id);
       if (!baseline) continue;
@@ -268,9 +301,12 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     if (stopped || pending.length === 0) return;
     const records = pending;
     pending = [];
+    const membershipSubtrees = new Set<Element>();
     for (const record of records) {
       if (record.type === "attributes" && record.target.nodeType === 1) {
-        processAttribute(record, record.target as Element);
+        const element = record.target as Element;
+        processAttribute(record, element);
+        membershipSubtrees.add(element);
       }
       if (record.type === "characterData" || record.type === "childList") processTextMutation(record);
       if (record.type === "childList") {
@@ -278,6 +314,7 @@ export function createSentinel(options: SentinelOptions): SentinelController {
         for (const node of record.addedNodes) reportAdded(node);
       }
     }
+    for (const subtree of membershipSubtrees) updateSelectorMembership(subtree);
   };
 
   const enqueue = (records: MutationRecord[]): void => {

@@ -8,9 +8,9 @@ A framework-agnostic, local-only browser library that watches explicitly selecte
 
 - Changes to watched attributes on explicitly protected elements, such as a payment form's `action` or a submit button's `formaction`.
 - Changes to text for narrowly selected elements when `watchText` is enabled.
-- Addition or removal of elements that match a protection rule.
+- Addition/removal of protected elements, plus existing elements entering or leaving a rule's selector match.
 - Newly inserted `iframe`, `object`, `embed`, `script`, or `[srcdoc]` elements inside a monitored root.
-- Expected changes can be configured with exact allowlists; routine attributes such as `class` are ignored unless a rule watches them.
+- Expected changes can be configured with exact allowlists. Routine attributes such as `class` are not compared for value changes unless watched, but changes that alter selector membership still produce a membership alert.
 
 Rules are deterministic. There is no model, remote inference, telemetry, or automatic response.
 

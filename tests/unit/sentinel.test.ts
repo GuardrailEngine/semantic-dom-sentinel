@@ -111,6 +111,62 @@ describe("deterministic DOM monitoring", () => {
     expect(alerts.map((alert) => alert.reason)).toContain("protected-element-added");
   });
 
+  it("detects an existing element that begins matching a protection selector", async () => {
+    const root = rootWith("<button>Pay</button>");
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts, [{ id: "payment-button", selector: "button.pay", watchAttributes: ["formaction"] }]);
+    const button = root.querySelector("button")!;
+
+    button.classList.add("pay");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toContain("protected-element-added");
+
+    button.setAttribute("formaction", "/unexpected");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toContain("attribute-changed");
+  });
+
+  it("reports selector membership changes caused by an ancestor attribute", async () => {
+    const root = rootWith('<section class="checkout"><button class="pay" formaction="/pay">Pay</button></section>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts, [{ id: "payment-button", selector: ".checkout button.pay", watchAttributes: ["formaction"] }]);
+    const section = root.querySelector("section")!;
+    const button = root.querySelector("button")!;
+
+    section.classList.remove("checkout");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toContain("protected-element-unmatched");
+
+    section.classList.add("checkout");
+    await tick();
+    button.setAttribute("formaction", "/redirected");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toContain("protected-element-added");
+    expect(alerts.map((alert) => alert.reason)).toContain("attribute-changed");
+  });
+
+  it("re-alerts when the same protected or risky node is removed and reinserted", async () => {
+    const root = rootWith('<button class="pay" formaction="/checkout">Pay</button><iframe></iframe>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts);
+    const button = root.querySelector("button")!;
+    const frame = root.querySelector("iframe")!;
+
+    button.setAttribute("formaction", "/changed");
+    await tick();
+    button.remove();
+    frame.remove();
+    await tick();
+    root.append(button, frame);
+    await tick();
+    button.setAttribute("formaction", "/changed");
+    await tick();
+
+    expect(alerts.filter((alert) => alert.reason === "attribute-changed")).toHaveLength(2);
+    expect(alerts.filter((alert) => alert.reason === "risky-element-added")).toHaveLength(1);
+    expect(alerts.filter((alert) => alert.reason === "protected-element-removed")).toHaveLength(1);
+  });
+
   it("deduplicates repeated mutations caused by an alert callback", async () => {
     const root = rootWith('<button class="pay" formaction="/checkout">Pay</button>');
     const button = root.querySelector("button")!;
