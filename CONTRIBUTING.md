@@ -15,7 +15,7 @@ Thanks for helping improve Semantic DOM Sentinel. Keep changes small, documented
 npm ci
 npm run lint
 npm run typecheck
-npm test
+npm run test:coverage
 npx playwright install chromium
 npm run test:e2e
 npm run build

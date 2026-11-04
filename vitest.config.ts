@@ -7,5 +7,10 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     testTimeout: 15_000,
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      reporter: ["text", "json-summary", "html"],
+    },
   },
 });
