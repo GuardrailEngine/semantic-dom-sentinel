@@ -1,45 +1,92 @@
+![Semantic DOM Sentinel — Observe. Compare. Alert. Local-only DOM integrity monitoring.](docs/assets/readme-hero.png)
+
 # Semantic DOM Sentinel
 
-A framework-agnostic, local-only browser library that watches explicitly selected DOM roots for deterministic integrity anomalies. It records a post-hydration baseline, batches `MutationObserver` records, and emits structured alerts for configured changes. It does not make network calls and does not modify, repair, block, or quarantine page content.
+### Observe the DOM that matters. Get structured alerts.
+
+A **TypeScript browser library for deterministic DOM integrity monitoring**. Select the roots and rules that matter, capture a baseline after hydration, and receive structured alerts when observed changes match its checks.
+
+**Local-only runtime. No runtime dependencies. No blocking or automatic repair.**
 
 [![CI](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/ci.yml)
-[![Coverage tests](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml)
+[![Coverage workflow](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
+[![Status: Early MVP](https://img.shields.io/badge/Status-Early_MVP-amber.svg)](#security-and-privacy)
 
-The coverage workflow runs `npm run test:coverage` and retains its report as a downloadable Actions artifact for 14 days. The badge reflects whether the coverage workflow passed; it does not display a coverage percentage.
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Alert reference](#alert-reference) · [Security & privacy](#security-and-privacy) · [Contribute](CONTRIBUTING.md)
 
-> **Early MVP:** This is a monitoring signal, not a security boundary or a replacement for secure coding, output encoding, CSP, Trusted Types, or server-side controls. It does not claim that this concept is unique.
+> [!IMPORTANT]
+> **Observability, not prevention.** This early MVP is a monitoring signal, not a security boundary. It does not block attacks, repair markup, or replace CSP, Trusted Types, secure coding, or server-side controls.
 
-## What it can detect
+## Why watch DOM integrity?
 
-- Changes to watched attributes on explicitly protected elements, such as a payment form's `action` or a submit button's `formaction`.
-- Changes to text for narrowly selected elements when `watchText` is enabled.
-- Addition/removal of protected elements, plus existing elements entering or leaving a rule's selector match.
-- Newly inserted `iframe`, `object`, `embed`, `script`, or `[srcdoc]` elements inside a monitored root.
-- Expected changes can be configured with exact allowlists. Routine attributes such as `class` are not compared for value changes unless watched, but changes that alter selector membership still produce a membership alert.
+A checkout form's `action`, a payment button's `formaction`, or a critical link's `href` can change after a page renders. When you need visibility into selected changes, a full-page mutation log can be more noise than signal.
 
-Rules are deterministic. There is no model, remote inference, telemetry, or automatic response.
+Semantic DOM Sentinel lets you describe **what to watch**, **which values are expected**, and **where to deliver alerts**. It uses `MutationObserver` and explicit rules—not AI, inferred intent, or remote analysis.
 
-## Install
+| Built for focused observation | What that means |
+| --- | --- |
+| **Explicit scope** | Monitor application-chosen DOM roots and CSS selectors, rather than automatically watching the whole page. |
+| **Deterministic checks** | Compare watched attributes, optional text, selector membership, and selected inserted elements. |
+| **Local processing** | No network calls, analytics, persistence, or telemetry in the runtime package. |
+| **Application-owned response** | Receive a typed callback; optionally inspect alerts in a local overlay. The monitor never rewrites protected content. |
 
-```sh
-npm install semantic-dom-sentinel
+Useful starting points include **checkout monitoring**, **payment-form integrity checks**, **critical-link monitoring**, and **SPA DOM diagnostics**. These are observation use cases, not guarantees of detecting or preventing an attack.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["Application chooses roots and rules"] --> B["createSentinel captures the current baseline"]
+    B --> C["MutationObserver watches the selected roots"]
+    C --> D["Batch mutations in a microtask"]
+    D --> E["Check rules, baseline, and exact allowlists"]
+    B -. "in-memory baseline" .-> E
+    E --> F["onAlert receives structured metadata"]
+    F --> G["Your application handler"]
+    F --> H["Optional local inspector overlay"]
+    classDef setup fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e;
+    classDef check fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    classDef alert fill:#fef3c7,stroke:#d97706,color:#78350f;
+    class A,B,C setup;
+    class D,E check;
+    class F,G,H alert;
 ```
 
-The package currently has no runtime dependencies. The published browser bundle is also available at `dist/index.global.js` after `npm run build`.
+The application must initialize the monitor **after hydration and after establishing its intended trusted state**. Baseline capture is synchronous: the library does not determine when a page is ready or whether its initial state is trustworthy. Alerts are emitted for detected conditions; routine changes do not all become alerts.
+
+## Build and install locally
+
+The package is **not currently available on the public npm registry**. Start from source instead of running `npm install semantic-dom-sentinel`:
+
+```sh
+git clone https://github.com/GuardrailEngine/semantic-dom-sentinel.git
+cd semantic-dom-sentinel
+npm ci
+npm run build
+npm pack
+```
+
+Install the generated tarball in your application. Replace the example path with its actual location:
+
+```sh
+npm install /absolute/path/to/semantic-dom-sentinel-0.1.0.tgz
+```
+
+The build generates ESM, CommonJS, a browser IIFE bundle at `dist/index.global.js`, and TypeScript declarations. These are local build outputs; they are not prebuilt files in the repository. The runtime package has no runtime dependencies.
 
 ## Quick start
 
-Create the monitor only after your framework has hydrated and the application has established its trusted initial state. Choose the sensitive roots explicitly instead of observing the entire document.
+Call this only after your application has finished hydration and established its intended trusted state. The example assumes a `#checkout-root` containing a `form[data-checkout]` and a `button[data-payment-submit]`.
 
 ```ts
-import { createSentinel, mountInspectorOverlay } from "semantic-dom-sentinel";
+import { createSentinel } from "semantic-dom-sentinel";
 
 const checkoutRoot = document.querySelector("#checkout-root");
 if (!(checkoutRoot instanceof HTMLElement)) {
   throw new Error("Checkout root was not found");
 }
 
-const inspector = mountInspectorOverlay();
 const sentinel = createSentinel({
   roots: [checkoutRoot],
   rules: [
@@ -52,65 +99,114 @@ const sentinel = createSentinel({
       id: "payment-submit",
       selector: "button[data-payment-submit]",
       watchAttributes: ["type", "formaction", "aria-label"],
-      watchText: true,
+      watchText: true, // Only for a fixed, non-sensitive button label.
     },
   ],
   onAlert(alert) {
     console.warn("DOM integrity alert", alert);
-    inspector.push(alert);
   },
 });
 
-// Call after a trusted application-level route transition only if the new DOM
-// state is intentionally accepted as the next baseline.
-// sentinel.refresh();
-
-window.addEventListener("pagehide", () => {
-  sentinel.stop();
-  inspector.destroy();
-}, { once: true });
+window.addEventListener("pagehide", () => sentinel.stop(), { once: true });
 ```
 
-`createSentinel` captures the baseline synchronously when called. It does not guess which elements are sensitive: the application supplies roots and CSS selectors. Use stable rule IDs and avoid putting personal or secret data in rule IDs or selectors.
+Changing the watched form's `action` after observation starts can produce an `attribute-changed` alert. The change itself is **not blocked or reversed**.
 
-## Rules and expected changes
+Use stable rule IDs and narrow selectors. Do not put personal or secret data in either: rule IDs and selectors appear in alert metadata. See the [checkout integration example](examples/checkout.ts) for an implementation with the optional inspector and a cleanup function.
 
-`watchAttributes` defaults to `action`, `aria-label`, `aria-controls`, `formaction`, `href`, `method`, `name`, `role`, `src`, `target`, and `type`. Provide a narrower list when practical. Add `class`, `style`, or `data-*` attributes only when your app specifically needs them monitored.
+### Add the optional inspector
 
-Intentional values can be allowlisted:
+For local diagnostics, mount the inspector before creating the monitor and forward alerts to it:
 
 ```ts
+import { mountInspectorOverlay } from "semantic-dom-sentinel";
+
+const inspector = mountInspectorOverlay();
+
+// In your createSentinel options:
+// onAlert: (alert) => inspector.push(alert)
+
+// During application cleanup, call both:
+// sentinel.stop();
+// inspector.destroy();
+```
+
+The overlay displays alert metadata using `textContent` in a closed Shadow DOM. It does not read or change protected nodes. It is a diagnostic UI, not an isolated security boundary.
+
+## Alert reference
+
+| Reason | Observed condition |
+| --- | --- |
+| `attribute-changed` | A watched attribute differs from the baseline and is not an allowed value. |
+| `text-changed` | Opted-in, normalized text differs from the baseline and allowed text values. |
+| `protected-element-added` | A newly added or newly matching element satisfies a configured rule. |
+| `protected-element-removed` | A previously matched element is removed from the monitored scope. |
+| `protected-element-unmatched` | An existing element stops matching its configured selector. |
+| `risky-element-added` | An inserted element matches a built-in or additional risky-node selector. |
+
+Built-in risky-node selectors are `iframe`, `object`, `embed`, `script`, and `[srcdoc]`. Here, “risky” is a selector category—not a verdict that an element is malicious. Detection applies within the selected roots; iframe documents are not automatically observed.
+
+**Illustrative attribute-change payload:**
+
+```json
 {
+  "id": 1,
+  "targetId": "node-1",
+  "reason": "attribute-changed",
+  "ruleId": "checkout-form",
+  "selector": "form[data-checkout]",
+  "attribute": "action",
+  "detectedAt": 1762210000000
+}
+```
+
+Alert objects contain **no changed attribute values, changed text, input values, or live DOM nodes**. `targetId` is an opaque, per-controller identifier. The callback stays in the current page; anything your own handler sends elsewhere is your application's responsibility.
+
+## Tune rules to your application
+
+### Watch only what matters
+
+`watchAttributes` defaults to `action`, `aria-label`, `aria-controls`, `formaction`, `href`, `method`, `name`, `role`, `src`, `target`, and `type`. Supply a narrower list when practical. Attributes such as `class`, `style`, and `data-*` are compared for value changes only if you explicitly watch them.
+
+Selector membership is checked separately: a `class` change can still produce a membership alert if it makes an element enter or leave a rule's selector match.
+
+### Allow intentional changes
+
+Exact allowlists describe known application states:
+
+```ts
+const detailsRule = {
   id: "expandable-payment-details",
   selector: "button[data-payment-details]",
   watchAttributes: ["aria-expanded"],
   allowAttributeValues: { "aria-expanded": ["true", "false"] },
-}
+};
 ```
 
-For text, `watchText` is opt-in. It compares normalized `textContent` in memory and does not add text to alert objects. Never enable it for inputs, account details, or user-entered content. `allowTextValues` lets you specify exact expected labels.
+`watchText` is opt-in. It compares normalized `textContent` in memory; `allowTextValues` supplies exact expected labels. Keep text rules narrow and limited to non-sensitive, application-owned labels. **Never use them on inputs, account details, or user-entered content.** The library never reads input `.value` properties.
 
-Alerts include a reason, rule ID, selector, ephemeral target ID, timestamp, and (for attribute changes) the attribute name. They never include the changed value or a live DOM element. The inspector overlay uses `textContent` and a closed Shadow DOM; it does not read or change protected nodes.
+### Manage the lifecycle deliberately
 
-## Lifecycle
+| Method | Behavior |
+| --- | --- |
+| `refresh()` | Accepts the current DOM as the next baseline. Use only after a trusted, intentional application transition; refreshing during a compromise would accept that state. |
+| `stop()` | Disconnects observers and discards queued work. Safe to call more than once. |
 
-- `refresh()` accepts the current DOM as a new baseline. Call it only after a trusted, intentional application transition; doing so while an attack is present would bless that state.
-- `stop()` disconnects the observers. Calling it more than once is safe.
-- Alerts are notifications only. The library never restores markup, removes nodes, blocks clicks, or quarantines content. Applications decide what to do with alerts.
+There is no automatic repair, node removal, click blocking, quarantine, or recovery. Applications decide what to do with alerts. Full interfaces are documented in [`src/types.ts`](src/types.ts).
 
-## Security and privacy limits
+## Security and privacy
 
-- A baseline is a point-in-time comparison, not proof that the initial page is trustworthy. A compromise that exists before initialization may be incorporated into the baseline.
-- This library cannot reliably protect itself from browser extensions with elevated privileges. Such extensions may change the DOM outside the page's security boundary, interfere with scripts, or suppress monitoring.
-- The contents of iframes are not observed automatically. Cross-origin iframe documents are out of scope and cannot be inspected under the browser same-origin policy. Even same-origin iframe documents must be explicitly monitored as separate roots.
-- Same-page scripts may stop or interfere with the monitor. Mutation observation is not a substitute for preventing script injection.
-- `watchText` stores the selected element's normalized text in private in-memory state for comparison. Keep the selector narrow and do not use it on sensitive or user-entered text. Input `.value` properties are never read by the library.
-- Alert delivery stays in the current page. There are no fetches, sockets, analytics, persistence, or telemetry in the runtime package.
-- The library does not prevent DOM-based XSS, clickjacking, phishing, payment redirection, or data theft. It can help a developer notice selected integrity changes after observation starts; it may miss changes outside the configured roots or rules.
+**What this monitor cannot establish is as important as what it observes.**
 
-Use a strict Content Security Policy, Trusted Types where supported, safe DOM APIs, dependency review, and server-side validation alongside this monitor.
+- **A baseline is not proof of trust.** A compromise present before initialization may be included in the baseline. The monitor may miss changes outside configured roots or rules.
+- **Hostile page scripts can interfere.** Same-page scripts may stop or suppress monitoring. Privileged browser extensions are outside a reliable page-level protection boundary.
+- **Iframe insertion is not iframe inspection.** Cross-origin documents are out of scope under the same-origin policy. Even same-origin iframe documents require separate, explicit roots.
+- **Local-only does not mean no in-memory content.** Opted-in text is normalized and retained privately for comparison; do not select sensitive text. Alert objects omit changed content, but include your configured rule IDs and selectors.
+- **Observation is not attack prevention.** This library does not prevent DOM-based XSS, clickjacking, phishing, payment redirection, or data theft. A detected change is not proof of an attack, and the absence of an alert is not proof of safety.
 
-## Development
+Use strict Content Security Policy, Trusted Types where supported, safe DOM APIs, output encoding, dependency review, and server-side validation alongside—not instead of—this monitor. See [SECURITY.md](SECURITY.md) for scope and responsible reporting. The project does not claim that this concept is unique or that security effectiveness has been proven.
+
+## Development and verification
 
 ```sh
 npm ci
@@ -122,12 +218,18 @@ npm run test:e2e
 npm run build
 ```
 
-The unit suite covers fingerprint capture, expected and suspicious changes, allowlists, removals/additions, and repeated observer mutations. Playwright covers SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. Performance smoke tests exercise an 8,000-element tree and a synchronous 1,000-mutation batch. The CI workflow runs lint, typecheck, and Chromium integration tests; the separate coverage workflow runs the unit and performance suite with coverage enabled.
+The tests exercise baseline capture, allowlists, attribute/text changes, selector membership, element additions/removals, repeated mutations, SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. Performance smoke tests use an **8,000-element tree** and a **1,000-mutation synchronous batch**. These are test workloads, not a published latency benchmark or a guarantee of production performance.
 
-## Contributing
+The [CI workflow](.github/workflows/ci.yml) runs lint, typecheck, and Chromium integration tests. The separate [coverage workflow](.github/workflows/coverage.yml) runs the unit and performance suite with coverage enabled and retains the report as a downloadable Actions artifact for 14 days. Its badge reports workflow status, **not a coverage percentage**.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Please keep runtime code framework-agnostic, deterministic, local-only, and alert-only unless a future design is reviewed as a separate security change.
+## Help shape the signals
+
+Contributions are welcome: focused reproductions, rule examples, tests for expected versus unexpected DOM changes, and documentation improvements are valuable starting points. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+Keep the runtime **framework-agnostic, deterministic, local-only, and alert-only**. Changes to that boundary require a separate security design review.
+
+[Report a reproducible issue](https://github.com/GuardrailEngine/semantic-dom-sentinel/issues) · [Review contribution guidance](CONTRIBUTING.md) · [Read the security policy](SECURITY.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE). Use, study, and adapt it under the license terms.
