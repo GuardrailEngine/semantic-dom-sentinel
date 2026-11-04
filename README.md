@@ -2,6 +2,11 @@
 
 A framework-agnostic, local-only browser library that watches explicitly selected DOM roots for deterministic integrity anomalies. It records a post-hydration baseline, batches `MutationObserver` records, and emits structured alerts for configured changes. It does not make network calls and does not modify, repair, block, or quarantine page content.
 
+[![CI](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/ci.yml)
+[![Coverage tests](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml)
+
+The coverage workflow runs `npm run test:coverage` and retains its report as a downloadable Actions artifact for 14 days. The badge reflects whether the coverage workflow passed; it does not display a coverage percentage.
+
 > **Early MVP:** This is a monitoring signal, not a security boundary or a replacement for secure coding, output encoding, CSP, Trusted Types, or server-side controls. It does not claim that this concept is unique.
 
 ## What it can detect
@@ -117,7 +122,7 @@ npm run test:e2e
 npm run build
 ```
 
-The unit suite covers fingerprint capture, expected and suspicious changes, allowlists, removals/additions, and repeated observer mutations. Playwright covers SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. Performance smoke tests exercise an 8,000-element tree and a synchronous 1,000-mutation batch. CI runs lint, typecheck, unit/performance tests, and Chromium integration tests.
+The unit suite covers fingerprint capture, expected and suspicious changes, allowlists, removals/additions, and repeated observer mutations. Playwright covers SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. Performance smoke tests exercise an 8,000-element tree and a synchronous 1,000-mutation batch. The CI workflow runs lint, typecheck, and Chromium integration tests; the separate coverage workflow runs the unit and performance suite with coverage enabled.
 
 ## Contributing
 
