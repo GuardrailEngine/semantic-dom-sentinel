@@ -6,8 +6,12 @@ export default defineConfig({
   reporter: "list",
   timeout: 20_000,
   use: {
-    browserName: "chromium",
     headless: true,
     trace: "retain-on-failure",
   },
+  projects: [
+    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "firefox", use: { browserName: "firefox" } },
+    { name: "webkit", use: { browserName: "webkit" } },
+  ],
 });

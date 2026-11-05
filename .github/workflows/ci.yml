@@ -28,7 +28,7 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
-      - name: Install Chromium for browser tests
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers for browser tests
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Browser integration and network-boundary tests
         run: npm run test:e2e

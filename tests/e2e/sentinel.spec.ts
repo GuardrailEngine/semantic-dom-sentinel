@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { SentinelAlert, SentinelController, SentinelOptions } from "../../src/types.js";
+import type { InspectorOverlay, SentinelAlert, SentinelController, SentinelOptions } from "../../src/types.js";
 
 const bundle = readFileSync(resolve(process.cwd(), "dist/index.global.js"), "utf8");
 
@@ -9,6 +9,7 @@ declare global {
   interface Window {
     SemanticDomSentinel: {
       createSentinel: (options: SentinelOptions) => SentinelController;
+      mountInspectorOverlay: (host?: HTMLElement, title?: string) => InspectorOverlay;
     };
     __sentinelAlerts: SentinelAlert[];
     __sentinelController: SentinelController;
