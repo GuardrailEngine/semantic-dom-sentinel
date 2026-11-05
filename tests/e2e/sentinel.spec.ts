@@ -15,9 +15,29 @@ declare global {
   }
 }
 
-async function prepare(page: import("@playwright/test").Page, html: string, requests: string[]) {
+type MockedFetchResponse = {
+  url: string;
+  body: Record<string, string>;
+};
+
+async function prepare(
+  page: import("@playwright/test").Page,
+  html: string,
+  requests: string[],
+  mockedFetch?: MockedFetchResponse,
+) {
   await page.route("**/*", async (route) => {
-    requests.push(route.request().url());
+    const requestUrl = route.request().url();
+    requests.push(requestUrl);
+    if (requestUrl === mockedFetch?.url) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify(mockedFetch.body),
+      });
+      return;
+    }
     await route.abort();
   });
   await page.setContent(html);
@@ -77,6 +97,37 @@ test("monitors SPA payment changes and injected iframes while making no network 
   expect(JSON.stringify(alerts)).not.toContain("untrusted.invalid");
   expect(JSON.stringify(alerts)).not.toContain("private");
   expect(attemptedRequests).toEqual([]);
+});
+
+test("alerts on mocked external fetch changes to the monitored DOM while blocking real network requests", async ({ page }) => {
+  const fixtureUrl = "https://fixture.invalid/dom-change.json";
+  const interceptedRequests: string[] = [];
+  await prepare(page, `
+    <main id="app">
+      <form action="/checkout">
+        <button class="pay" type="submit" formaction="/pay">Pay securely</button>
+      </form>
+    </main>
+  `, interceptedRequests, {
+    url: fixtureUrl,
+    body: { text: "Safe fixture label", action: "/fixture/continue" },
+  });
+
+  await page.evaluate(async (url) => {
+    const response = await fetch(url);
+    const fixture = await response.json() as { text: string; action: string };
+    const button = document.querySelector<HTMLButtonElement>("button.pay");
+    if (!button) throw new Error("Missing payment button");
+    button.textContent = fixture.text;
+    button.setAttribute("formaction", fixture.action);
+  }, fixtureUrl);
+
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBeGreaterThanOrEqual(2);
+  const alerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(alerts.map((alert) => alert.reason)).toContain("attribute-changed");
+  expect(alerts.map((alert) => alert.reason)).toContain("text-changed");
+  expect(alerts.map((alert) => alert.ruleId)).toContain("payment-button");
+  expect(interceptedRequests).toEqual([fixtureUrl]);
 });
 
 test("a stable SPA class/state update is not reported as a security anomaly", async ({ page }) => {
