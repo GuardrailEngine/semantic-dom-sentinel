@@ -178,7 +178,7 @@ Built-in risky-node selectors are `iframe`, `object`, `embed`, `script`, and `[s
 }
 ```
 
-Alert objects contain **no changed attribute values, changed text, input values, or live DOM nodes**. `targetId` is an opaque, per-controller identifier. The callback stays in the current page; anything your own handler sends elsewhere is your application's responsibility.
+Alert objects contain **no changed attribute values, changed text, input values, or live DOM nodes**. `targetId` is an opaque, per-controller identifier: it stays the same for the same DOM element across `refresh()` and removal/reinsertion, while a replacement element gets a different ID. The callback stays in the current page; anything your own handler sends elsewhere is your application's responsibility.
 
 ## Tune rules to your application
 
@@ -205,10 +205,14 @@ const detailsRule = {
 
 ### Manage the lifecycle deliberately
 
+`createSentinel()` takes a synchronous snapshot of the current DOM under the supplied roots before observation begins. Existing matching elements and their current watched state are accepted as the baseline; this is not a trust or integrity check. When supplied roots overlap, only their outermost roots are observed so one mutation is not delivered twice, while all supplied roots remain part of the baseline and logical scope.
+
 | Method | Behavior |
 | --- | --- |
-| `refresh()` | Accepts the current DOM as the next baseline. Use only after a trusted, intentional application transition; refreshing during a compromise would accept that state. |
-| `stop()` | Disconnects observers and discards queued work. Safe to call more than once. |
+| `refresh()` | Accepts the current DOM as the next baseline. Use only after a trusted, intentional application transition; refreshing during a compromise would accept that state. Unreported mutations from before the call are intentionally absorbed without alerts; alerts already delivered are not retracted. If called inside `onAlert`, the current alert completes, the new baseline is captured, and the rest of the older batch is discarded. Later mutations are compared with the new baseline. |
+| `stop()` | Disconnects observers and discards queued work. Safe to call more than once. If called inside `onAlert`, the current alert completes and the rest of that batch is discarded. Calling `refresh()` after `stop()` throws. |
+
+Within one pending batch, watched state is evaluated against the final DOM state. A watched value that changes and returns to its baseline or an allowed value before the batch is processed does not produce a change alert. If the final state is unexpected, distinct unexpected attribute transitions remain separate alerts—even when they share the same target, rule, reason, and attribute. A write that leaves an attribute unchanged is not a state transition. Different rules are evaluated independently.
 
 There is no automatic repair, node removal, click blocking, quarantine, or recovery. Applications decide what to do with alerts. Full interfaces are documented in [`src/types.ts`](src/types.ts).
 

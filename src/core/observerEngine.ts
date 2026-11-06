@@ -48,12 +48,6 @@ function elementsIn(node: Node): Element[] {
   return elements;
 }
 
-function hasTextNode(node: Node): boolean {
-  if (node.nodeType === 3) return true;
-  for (const child of node.childNodes) if (hasTextNode(child)) return true;
-  return false;
-}
-
 function currentFingerprint(element: Element, rule: ProtectionRule): DomFingerprint {
   return createDomFingerprint(element, rule);
 }
@@ -79,18 +73,25 @@ export function createSentinel(options: SentinelOptions): SentinelController {
   const riskySelectors = [...new Set([...BUILTIN_RISKY_SELECTORS, ...(options.riskySelectors ?? [])])];
   for (const selector of riskySelectors) assertSelector(selector, "riskySelectors");
 
+  const observationRoots = roots.filter((root) =>
+    !roots.some((candidate) => candidate !== root && candidate.contains(root)),
+  );
+
   let fingerprints = new WeakMap<Element, Map<string, DomFingerprint>>();
   let activeRules = new WeakMap<Element, Set<string>>();
   let baselineRisky = new WeakSet<Element>();
   let seenRisky = new WeakSet<Element>();
-  let lastStates = new WeakMap<Element, Map<string, string>>();
-  let nodeIds = new WeakMap<Element, string>();
+  const nodeIds = new WeakMap<Element, string>();
   let nextNodeId = 1;
   let nextAlertId = 1;
   let pending: MutationRecord[] = [];
   let scheduled = false;
   let stopped = false;
+  let flushing = false;
+  let abortCurrentBatch = false;
   const observers: Observer[] = [];
+
+  const canContinueBatch = (): boolean => !stopped && !abortCurrentBatch;
 
   const getTargetId = (element: Element): string => {
     let id = nodeIds.get(element);
@@ -106,17 +107,8 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     reason: SentinelAlert["reason"],
     ruleId: string,
     selector: string,
-    state: string,
     attribute?: string,
   ): void => {
-    let stateMap = lastStates.get(element);
-    if (!stateMap) {
-      stateMap = new Map();
-      lastStates.set(element, stateMap);
-    }
-    const key = `${ruleId}|${reason}|${attribute ?? ""}`;
-    if (stateMap.get(key) === state) return;
-    stateMap.set(key, state);
     const alert: SentinelAlert = {
       id: nextAlertId++,
       targetId: getTargetId(element),
@@ -131,11 +123,6 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     } catch {
       // A consumer callback must not break observation of later mutations.
     }
-  };
-
-  const clearDeduplication = (element: Element, ruleId: string, reason: string, attribute?: string): void => {
-    const key = `${ruleId}|${reason}|${attribute ?? ""}`;
-    lastStates.get(element)?.delete(key);
   };
 
   const storeBaseline = (element: Element, rule: ProtectionRule): void => {
@@ -158,9 +145,6 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     activeRules = new WeakMap();
     baselineRisky = new WeakSet();
     seenRisky = new WeakSet();
-    lastStates = new WeakMap();
-    nodeIds = new WeakMap();
-    nextNodeId = 1;
     for (const root of roots) {
       for (const rule of options.rules) {
         for (const element of queryWithin(root, rule.selector)) {
@@ -177,12 +161,12 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     for (const element of elementsIn(node)) {
       baselineRisky.delete(element);
       seenRisky.delete(element);
-      lastStates.delete(element);
       for (const rule of options.rules) {
         const active = activeRules.get(element);
         if (!active?.has(rule.id) || !fingerprints.get(element)?.has(rule.id)) continue;
         active.delete(rule.id);
-        emit(element, "protected-element-removed", rule.id, rule.selector, "removed");
+        emit(element, "protected-element-removed", rule.id, rule.selector);
+        if (!canContinueBatch()) return;
       }
     }
   };
@@ -192,17 +176,20 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       for (const selector of riskySelectors) {
         if (!element.matches(selector) || baselineRisky.has(element) || seenRisky.has(element)) continue;
         seenRisky.add(element);
-        emit(element, "risky-element-added", BUILTIN_RULE_ID, selector, "added");
+        emit(element, "risky-element-added", BUILTIN_RULE_ID, selector);
+        if (!canContinueBatch()) return;
         break;
       }
       for (const rule of options.rules) {
+        if (!canContinueBatch()) return;
         if (!element.matches(rule.selector)) continue;
         const active = activeRules.get(element);
         const known = fingerprints.get(element)?.has(rule.id) ?? false;
         if (active?.has(rule.id)) continue;
         if (!known) storeBaseline(element, rule);
         else active?.add(rule.id);
-        emit(element, "protected-element-added", rule.id, rule.selector, "added");
+        emit(element, "protected-element-added", rule.id, rule.selector);
+        if (!canContinueBatch()) return;
       }
     }
   };
@@ -241,39 +228,39 @@ export function createSentinel(options: SentinelOptions): SentinelController {
             }
             activeSet.add(rule.id);
           }
-          lastStates.get(element)?.clear();
-          emit(element, "protected-element-added", rule.id, rule.selector, "selector-matched");
+          emit(element, "protected-element-added", rule.id, rule.selector);
+          if (!canContinueBatch()) return;
         } else if (!matches && isActive) {
           active?.delete(rule.id);
-          lastStates.get(element)?.clear();
-          emit(element, "protected-element-unmatched", rule.id, rule.selector, "selector-unmatched");
+          emit(element, "protected-element-unmatched", rule.id, rule.selector);
+          if (!canContinueBatch()) return;
         }
       }
     }
   };
 
-  const processAttribute = (record: MutationRecord, element: Element): void => {
+  const processAttribute = (record: MutationRecord, element: Element, nextValue: string | null): void => {
     const attribute = record.attributeName;
     if (!attribute) return;
     for (const rule of options.rules) {
+      if (!canContinueBatch()) return;
       if (!activeRules.get(element)?.has(rule.id)) continue;
       if (!watchedAttributes(rule).includes(attribute)) continue;
       const baseline = fingerprints.get(element)?.get(rule.id);
       if (!baseline) continue;
       const current = element.getAttribute(attribute);
-      const result = inspectAttributeValues(baseline, rule, attribute, [record.oldValue, current]);
-      if (result.changed) {
-        emit(element, "attribute-changed", rule.id, rule.selector, result.state, attribute);
-      } else {
-        clearDeduplication(element, rule.id, "attribute-changed", attribute);
-      }
+      if (!inspectAttributeValues(baseline, rule, attribute, [current]).changed) continue;
+      if (record.oldValue === nextValue) continue;
+      if (!inspectAttributeValues(baseline, rule, attribute, [nextValue]).changed) continue;
+      emit(element, "attribute-changed", rule.id, rule.selector, attribute);
+      if (!canContinueBatch()) return;
     }
   };
 
   const processTextMutation = (record: MutationRecord): void => {
-    const textChangedStructure = record.type === "childList" &&
-      [...record.addedNodes, ...record.removedNodes].some(hasTextNode);
+    if (!canContinueBatch()) return;
     for (const rule of options.rules) {
+      if (!canContinueBatch()) return;
       if (!rule.watchText) continue;
       const boundary = findRoot(record.target.nodeType === 1
         ? (record.target as Element)
@@ -283,15 +270,9 @@ export function createSentinel(options: SentinelOptions): SentinelController {
         const baseline = fingerprints.get(element)?.get(rule.id);
         if (!baseline) continue;
         const text = normalizeText(element.textContent);
-        const transientCharacterChange = record.type === "characterData" &&
-          record.oldValue !== (record.target as CharacterData).data;
-        const unexpected = !isExpectedText(baseline, rule, text);
-        if (unexpected || transientCharacterChange || textChangedStructure) {
-          const state = unexpected ? `text:${text}` : `text:transient:${record.type}`;
-          emit(element, "text-changed", rule.id, rule.selector, state);
-        } else {
-          clearDeduplication(element, rule.id, "text-changed");
-        }
+        if (isExpectedText(baseline, rule, text)) continue;
+        emit(element, "text-changed", rule.id, rule.selector);
+        if (!canContinueBatch()) return;
       }
     }
   };
@@ -301,20 +282,64 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     if (stopped || pending.length === 0) return;
     const records = pending;
     pending = [];
-    const membershipSubtrees = new Set<Element>();
+    const attributeGroups = new Map<Element, Map<string, MutationRecord[]>>();
     for (const record of records) {
-      if (record.type === "attributes" && record.target.nodeType === 1) {
-        const element = record.target as Element;
-        processAttribute(record, element);
-        membershipSubtrees.add(element);
+      if (record.type !== "attributes" || record.target.nodeType !== 1 || !record.attributeName) continue;
+      const element = record.target as Element;
+      let attributes = attributeGroups.get(element);
+      if (!attributes) {
+        attributes = new Map();
+        attributeGroups.set(element, attributes);
       }
-      if (record.type === "characterData" || record.type === "childList") processTextMutation(record);
-      if (record.type === "childList") {
-        for (const node of record.removedNodes) reportRemoved(node);
-        for (const node of record.addedNodes) reportAdded(node);
+      const attributeRecords = attributes.get(record.attributeName) ?? [];
+      attributeRecords.push(record);
+      attributes.set(record.attributeName, attributeRecords);
+    }
+    const nextAttributeValues = new Map<MutationRecord, string | null>();
+    for (const [element, attributes] of attributeGroups) {
+      for (const [attribute, attributeRecords] of attributes) {
+        for (const [index, record] of attributeRecords.entries()) {
+          const nextRecord = attributeRecords[index + 1];
+          nextAttributeValues.set(record, nextRecord ? nextRecord.oldValue : element.getAttribute(attribute));
+        }
       }
     }
-    for (const subtree of membershipSubtrees) updateSelectorMembership(subtree);
+
+    const membershipSubtrees = new Set<Element>();
+    flushing = true;
+    abortCurrentBatch = false;
+    try {
+      for (const record of records) {
+        if (!canContinueBatch()) return;
+        if (record.type === "attributes" && record.target.nodeType === 1) {
+          const element = record.target as Element;
+          const nextValue = nextAttributeValues.has(record)
+            ? nextAttributeValues.get(record) ?? null
+            : element.getAttribute(record.attributeName ?? "");
+          processAttribute(record, element, nextValue);
+          membershipSubtrees.add(element);
+        }
+        if (record.type === "characterData" || record.type === "childList") processTextMutation(record);
+        if (!canContinueBatch()) return;
+        if (record.type === "childList") {
+          for (const node of record.removedNodes) {
+            reportRemoved(node);
+            if (!canContinueBatch()) return;
+          }
+          for (const node of record.addedNodes) {
+            reportAdded(node);
+            if (!canContinueBatch()) return;
+          }
+        }
+      }
+      for (const subtree of membershipSubtrees) {
+        if (!canContinueBatch()) return;
+        updateSelectorMembership(subtree);
+      }
+    } finally {
+      flushing = false;
+      abortCurrentBatch = false;
+    }
   };
 
   const enqueue = (records: MutationRecord[]): void => {
@@ -327,7 +352,7 @@ export function createSentinel(options: SentinelOptions): SentinelController {
   };
 
   establishBaseline();
-  for (const root of roots) {
+  for (const root of observationRoots) {
     const observer = new MutationObserver((records) => enqueue(records));
     observer.observe(root, {
       subtree: true,
@@ -343,6 +368,7 @@ export function createSentinel(options: SentinelOptions): SentinelController {
   return {
     refresh(): void {
       if (stopped) throw new Error("Cannot refresh a stopped Semantic DOM Sentinel controller.");
+      if (flushing) abortCurrentBatch = true;
       for (const observer of observers) observer.takeRecords();
       pending = [];
       establishBaseline();
@@ -350,8 +376,12 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     stop(): void {
       if (stopped) return;
       stopped = true;
+      if (flushing) abortCurrentBatch = true;
       pending = [];
-      for (const observer of observers) observer.disconnect();
+      for (const observer of observers) {
+        observer.takeRecords();
+        observer.disconnect();
+      }
     },
   };
 }

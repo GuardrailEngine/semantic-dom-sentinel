@@ -141,3 +141,67 @@ test("a stable SPA class/state update is not reported as a security anomaly", as
   expect(await page.evaluate(() => window.__sentinelAlerts)).toHaveLength(0);
   expect(attemptedRequests).toEqual([]);
 });
+
+test("refresh absorbs a pending mutation and observes later changes from the new baseline", async ({ page }) => {
+  const attemptedRequests: string[] = [];
+  await prepare(page, `
+    <main id="app"><button class="pay" type="submit">Pay</button></main>
+  `, attemptedRequests);
+
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>("button.pay");
+    if (!button) throw new Error("Missing payment button");
+    button.setAttribute("type", "button");
+    window.__sentinelController.refresh();
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+  expect(await page.evaluate(() => window.__sentinelAlerts)).toHaveLength(0);
+
+  await page.evaluate(() => document.querySelector("button.pay")!.setAttribute("type", "reset"));
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(1);
+  const alerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(alerts[0]?.reason).toBe("attribute-changed");
+  expect(alerts[0]?.attribute).toBe("type");
+  expect(attemptedRequests).toEqual([]);
+});
+
+test("nested roots do not duplicate mutations and separate same-key events remain separate", async ({ page }) => {
+  const attemptedRequests: string[] = [];
+  await prepare(page, `
+    <main id="app"><form><button class="pay" type="submit">Pay</button></form></main>
+  `, attemptedRequests);
+
+  await page.evaluate(() => {
+    window.__sentinelController.stop();
+    window.__sentinelAlerts = [];
+    const outer = document.querySelector<HTMLElement>("#app");
+    const inner = document.querySelector<HTMLFormElement>("form");
+    if (!outer || !inner) throw new Error("Missing nested roots");
+    window.__sentinelController = window.SemanticDomSentinel.createSentinel({
+      roots: [outer, inner],
+      rules: [
+        { id: "all-buttons", selector: "button", watchAttributes: ["type"] },
+        { id: "payment-button", selector: "button.pay", watchAttributes: ["type"] },
+      ],
+      onAlert: (alert) => window.__sentinelAlerts.push(alert),
+    });
+    const button = document.querySelector<HTMLButtonElement>("button.pay")!;
+    button.setAttribute("type", "button");
+    button.setAttribute("type", "submit");
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+  expect(await page.evaluate(() => window.__sentinelAlerts)).toHaveLength(0);
+
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>("button.pay")!;
+    button.setAttribute("type", "button");
+    button.setAttribute("type", "reset");
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(4);
+  const alerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(alerts.map((alert) => alert.reason)).toEqual(Array(4).fill("attribute-changed"));
+  expect(alerts.filter((alert) => alert.ruleId === "all-buttons")).toHaveLength(2);
+  expect(alerts.filter((alert) => alert.ruleId === "payment-button")).toHaveLength(2);
+  expect(new Set(alerts.map((alert) => alert.targetId)).size).toBe(1);
+  expect(attemptedRequests).toEqual([]);
+});
