@@ -60,7 +60,7 @@
     "eslint": "^10.14.0",
     "globals": "^16.2.0",
     "jsdom": "^26.1.0",
-    "tsup": "^8.4.0",
+    "tsup": "^9.0.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.34.1",
     "vitest": "^4.1.12"
