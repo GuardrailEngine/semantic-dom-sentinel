@@ -139,6 +139,264 @@ describe("deterministic DOM monitoring", () => {
     expect(alerts[0]?.targetId).toBe(alerts[1]?.targetId);
   });
 
+  it("keeps an explicitly supplied nested root observed while detached", async () => {
+    const outer = rootWith('<section><button class="pay" type="submit">Pay</button></section>');
+    const inner = outer.querySelector("section")!;
+    const button = inner.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [inner, outer],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    inner.remove();
+    button.setAttribute("type", "button");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual(["attribute-changed"]);
+
+    outer.append(inner);
+    await tick();
+    button.setAttribute("type", "reset");
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual(["attribute-changed", "attribute-changed"]);
+    expect(new Set(alerts.map((alert) => alert.targetId)).size).toBe(1);
+  });
+
+  it("continues observing a top-level root while the root itself is detached", async () => {
+    const root = rootWith('<button class="pay" type="submit">Pay</button>');
+    const button = root.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts);
+
+    root.remove();
+    button.setAttribute("type", "button");
+    await tick();
+    document.body.append(root);
+    button.setAttribute("type", "reset");
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual(["attribute-changed", "attribute-changed"]);
+  });
+
+  it("does not report a protected element moving between supplied roots as removed or added", async () => {
+    const first = rootWith('<button class="pay" type="submit">Pay</button>');
+    const second = rootWith("");
+    const button = first.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [first, second],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    second.append(button);
+    await tick();
+    expect(alerts).toHaveLength(0);
+
+    button.setAttribute("type", "button");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual(["attribute-changed"]);
+  });
+
+  it("reconciles only the return state after distinct writes while outside the roots union", async () => {
+    const first = rootWith('<button class="pay" type="submit">Pay</button>');
+    const second = rootWith("");
+    const button = first.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [first, second],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    button.remove();
+    button.setAttribute("type", "button");
+    button.setAttribute("type", "reset");
+    second.append(button);
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual(["attribute-changed"]);
+
+    button.setAttribute("type", "button");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual([
+      "attribute-changed",
+      "attribute-changed",
+    ]);
+  });
+
+  it("reconciles the final text only after a same-batch exit and return", async () => {
+    const first = rootWith('<button class="pay" type="submit">Pay</button>');
+    const second = rootWith("");
+    const button = first.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [first, second],
+      rules: [{ id: "payment-button", selector: "button.pay", watchText: true }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    button.remove();
+    button.textContent = "Detached intermediate";
+    button.textContent = "Detached final";
+    second.append(button);
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual(["text-changed"]);
+    expect(JSON.stringify(alerts)).not.toContain("Detached");
+  });
+
+  it("reconciles watched state when a known element re-enters the roots union", async () => {
+    const first = rootWith('<button class="pay" type="submit">Pay</button>');
+    const second = rootWith("");
+    const button = first.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [first, second],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"], watchText: true }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    button.remove();
+    await tick();
+    button.setAttribute("type", "reset");
+    button.textContent = "Changed while outside";
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual(["protected-element-removed"]);
+
+    second.append(button);
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual([
+      "protected-element-removed",
+      "protected-element-added",
+      "attribute-changed",
+      "text-changed",
+    ]);
+    expect(new Set(alerts.map((alert) => alert.targetId)).size).toBe(1);
+    expect(JSON.stringify(alerts)).not.toContain("Changed while outside");
+  });
+
+  it("separates a return-state reconciliation from a later in-scope attribute event", async () => {
+    const first = rootWith('<button class="pay" type="submit">Pay</button>');
+    const second = rootWith("");
+    const button = first.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [first, second],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    button.remove();
+    await tick();
+    button.setAttribute("type", "reset");
+    await tick();
+    second.append(button);
+    button.setAttribute("type", "button");
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual([
+      "protected-element-removed",
+      "protected-element-added",
+      "attribute-changed",
+      "attribute-changed",
+    ]);
+    expect(alerts.filter((alert) => alert.reason === "attribute-changed").map((alert) => alert.attribute))
+      .toEqual(["type", "type"]);
+  });
+
+  it("does not accept a detached final attribute value after an in-scope exit in the same batch", async () => {
+    const first = rootWith('<button class="pay" type="submit">Pay</button>');
+    const second = rootWith("");
+    const button = first.querySelector("button")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [first, second],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    button.setAttribute("type", "button");
+    button.remove();
+    button.setAttribute("type", "reset");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual([
+      "attribute-changed",
+      "protected-element-removed",
+    ]);
+
+    second.append(button);
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual([
+      "attribute-changed",
+      "protected-element-removed",
+      "protected-element-added",
+      "attribute-changed",
+    ]);
+    expect(new Set(alerts.map((alert) => alert.targetId)).size).toBe(1);
+  });
+
+  it("keeps the root set fixed for a controller and requires recreation for replacement roots", async () => {
+    const originalRoot = rootWith('<button class="pay" type="submit">Old</button>');
+    const originalButton = originalRoot.querySelector("button")!;
+    const replacementRoot = document.createElement("main");
+    replacementRoot.innerHTML = '<button class="pay" type="submit">New</button>';
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [originalRoot],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    originalRoot.replaceWith(replacementRoot);
+    const replacementButton = replacementRoot.querySelector("button")!;
+    replacementButton.setAttribute("type", "button");
+    await tick();
+    expect(alerts).toHaveLength(0);
+
+    originalButton.setAttribute("type", "button");
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual(["attribute-changed"]);
+
+    const replacementAlerts: SentinelAlert[] = [];
+    const replacementController = createSentinel({
+      roots: [replacementRoot],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => replacementAlerts.push(alert),
+    });
+    controllers.push(replacementController);
+    replacementButton.setAttribute("type", "reset");
+    await tick();
+    expect(replacementAlerts.map((alert) => alert.reason)).toEqual(["attribute-changed"]);
+  });
+
+  it("uses root containment rather than roots array order for text ancestor checks", async () => {
+    const outer = rootWith('<button class="pay" type="submit"><span>Pay</span></button>');
+    const inner = outer.querySelector("span")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [inner, outer],
+      rules: [{ id: "payment-button", selector: "button.pay", watchText: true }],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    inner.textContent = "Changed";
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual(["text-changed"]);
+  });
+
   it("keeps a node targetId across refresh and reinsertion but assigns replacements a new one", async () => {
     const root = rootWith('<button class="pay" type="submit">Pay</button>');
     const alerts: SentinelAlert[] = [];
