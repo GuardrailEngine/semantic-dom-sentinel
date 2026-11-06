@@ -2,16 +2,35 @@
   "name": "semantic-dom-sentinel",
   "version": "0.1.0",
   "description": "A framework-agnostic, local-only DOM integrity monitor with deterministic alerts.",
+  "keywords": [
+    "dom",
+    "dom-monitoring",
+    "mutation-observer",
+    "browser",
+    "typescript",
+    "integrity-monitoring"
+  ],
+  "homepage": "https://github.com/GuardrailEngine/semantic-dom-sentinel#readme",
+  "bugs": {
+    "url": "https://github.com/GuardrailEngine/semantic-dom-sentinel/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GuardrailEngine/semantic-dom-sentinel.git"
+  },
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "browser": "./dist/index.global.js",
+  "browser": "./dist/index.js",
+  "unpkg": "./dist/index.global.js",
+  "jsdelivr": "./dist/index.global.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "browser": "./dist/index.js",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     }
