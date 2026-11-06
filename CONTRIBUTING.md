@@ -40,6 +40,8 @@ npx playwright install
 4. Run the relevant checks below before opening a pull request.
 5. Open a pull request against `main` with a clear summary, rationale, test results, and any known limitations. Use a concise commit message that describes the change.
 
+For user-visible changes, update [`CHANGELOG.md`](CHANGELOG.md). Versioning and the GitHub-only release checklist are documented in [`docs/releasing.md`](docs/releasing.md).
+
 ## Tests and checks
 
 Run the checks relevant to your change. The complete local sequence is:
