@@ -26,10 +26,10 @@ Use Node.js 22 and npm, matching the version used by GitHub Actions. From a fres
 npm ci
 ```
 
-Install Chromium once before running browser integration tests:
+Install the Playwright-managed Chromium, Firefox, and WebKit browsers before running the complete browser integration suite:
 
 ```sh
-npx playwright install chromium
+npx playwright install
 ```
 
 ## Development workflow
@@ -48,14 +48,14 @@ Run the checks relevant to your change. The complete local sequence is:
 npm run lint
 npm run typecheck
 npm run test:coverage
-npx playwright install chromium
+npx playwright install
 npm run test:e2e
 npm run build
 ```
 
-`npm run test:coverage` runs the Vitest unit and performance suites with V8 coverage enabled. The coverage workflow uploads the generated `coverage/` directory as an Actions artifact for 14 days. `npm run test:e2e` builds the package and runs the Playwright browser suite; install Chromium first as shown above. `npm run test:all` is also available and runs lint, typecheck, coverage tests, and browser tests in sequence.
+`npm run test:coverage` runs the Vitest unit and performance suites with V8 coverage enabled. The coverage workflow uploads the generated `coverage/` directory as an Actions artifact for 14 days. `npm run test:e2e` builds the package and runs the Playwright browser suite in Chromium, Firefox, and WebKit; install all three browsers first as shown above. `npm run test:all` is also available and runs lint, typecheck, coverage tests, and browser tests in sequence.
 
-GitHub Actions runs lint, typechecking, and Chromium integration tests in the CI workflow, and runs the unit/performance coverage suite in a separate coverage workflow. Please review the workflow results and resolve failures before requesting review.
+GitHub Actions runs lint, typechecking, and Playwright integration tests in Chromium, Firefox, and WebKit in the CI workflow, and runs the unit/performance coverage suite in a separate coverage workflow. Please review the workflow results and resolve failures before requesting review.
 
 ## Testing guidance
 
