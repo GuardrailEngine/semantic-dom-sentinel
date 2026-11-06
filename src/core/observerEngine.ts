@@ -73,11 +73,8 @@ export function createSentinel(options: SentinelOptions): SentinelController {
   const riskySelectors = [...new Set([...BUILTIN_RISKY_SELECTORS, ...(options.riskySelectors ?? [])])];
   for (const selector of riskySelectors) assertSelector(selector, "riskySelectors");
 
-  const observationRoots = roots.filter((root) =>
-    !roots.some((candidate) => candidate !== root && candidate.contains(root)),
-  );
-
   let fingerprints = new WeakMap<Element, Map<string, DomFingerprint>>();
+  let lastObservedStates = new WeakMap<Element, Map<string, DomFingerprint>>();
   let activeRules = new WeakMap<Element, Set<string>>();
   let baselineRisky = new WeakSet<Element>();
   let seenRisky = new WeakSet<Element>();
@@ -100,6 +97,45 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       nodeIds.set(element, id);
     }
     return id;
+  };
+
+  const rememberCurrentState = (element: Element, rule: ProtectionRule): void => {
+    let snapshots = lastObservedStates.get(element);
+    if (!snapshots) {
+      snapshots = new Map();
+      lastObservedStates.set(element, snapshots);
+    }
+    snapshots.set(rule.id, currentFingerprint(element, rule));
+  };
+
+  const rememberAttributeState = (
+    element: Element,
+    rule: ProtectionRule,
+    attribute: string,
+    value: string | null,
+  ): void => {
+    let snapshots = lastObservedStates.get(element);
+    if (!snapshots) {
+      snapshots = new Map();
+      lastObservedStates.set(element, snapshots);
+    }
+    const previous = snapshots.get(rule.id) ?? fingerprints.get(element)?.get(rule.id);
+    if (!previous) return;
+    snapshots.set(rule.id, {
+      ...previous,
+      attributes: { ...previous.attributes, [attribute]: value },
+    });
+  };
+
+  const rememberTextState = (element: Element, rule: ProtectionRule, text: string): void => {
+    let snapshots = lastObservedStates.get(element);
+    if (!snapshots) {
+      snapshots = new Map();
+      lastObservedStates.set(element, snapshots);
+    }
+    const previous = snapshots.get(rule.id) ?? fingerprints.get(element)?.get(rule.id);
+    if (!previous) return;
+    snapshots.set(rule.id, { ...previous, text });
   };
 
   const emit = (
@@ -132,6 +168,7 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       fingerprints.set(element, snapshots);
     }
     snapshots.set(rule.id, currentFingerprint(element, rule));
+    rememberCurrentState(element, rule);
     let active = activeRules.get(element);
     if (!active) {
       active = new Set();
@@ -142,6 +179,7 @@ export function createSentinel(options: SentinelOptions): SentinelController {
 
   const establishBaseline = (): void => {
     fingerprints = new WeakMap();
+    lastObservedStates = new WeakMap();
     activeRules = new WeakMap();
     baselineRisky = new WeakSet();
     seenRisky = new WeakSet();
@@ -157,8 +195,23 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     }
   };
 
+  const isInScope = (element: Element): boolean =>
+    roots.some((root) => root === element || root.contains(element));
+
+  const isWithinSuppliedRoot = (node: Node): boolean =>
+    roots.some((root) => root === node || root.contains(node));
+
+  const isRetainedByRootInsideSubtree = (subtree: Node, element: Element): boolean =>
+    roots.some((root) => {
+      const rootIsInSubtree = root === subtree ||
+        (subtree.nodeType === 1 && (subtree as Element).contains(root));
+      return rootIsInSubtree && (root === element || root.contains(element));
+    });
+
   const reportRemoved = (node: Node): void => {
     for (const element of elementsIn(node)) {
+      // A move between supplied roots does not leave the union scope.
+      if (isInScope(element)) continue;
       baselineRisky.delete(element);
       seenRisky.delete(element);
       for (const rule of options.rules) {
@@ -171,8 +224,66 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     }
   };
 
-  const reportAdded = (node: Node): void => {
+  const reconcileReactivatedElement = (
+    element: Element,
+    rule: ProtectionRule,
+    records: readonly MutationRecord[],
+    addedRecordIndex: number,
+    onlyUnrecordedChanges: boolean,
+  ): void => {
+    const baseline = fingerprints.get(element)?.get(rule.id);
+    if (!baseline) return;
+    const previous = lastObservedStates.get(element)?.get(rule.id) ?? baseline;
+
+    for (const attribute of watchedAttributes(rule)) {
+      const hasAttributeRecord = records.some((record) =>
+        record.type === "attributes" && record.target === element && record.attributeName === attribute,
+      );
+      if (onlyUnrecordedChanges && hasAttributeRecord) continue;
+      const firstPostEntryChange = records.find((record, index) =>
+        index > addedRecordIndex &&
+        record.type === "attributes" &&
+        record.target === element &&
+        record.attributeName === attribute,
+      );
+      const currentValue = firstPostEntryChange
+        ? firstPostEntryChange.oldValue
+        : element.getAttribute(attribute);
+      if (previous.attributes[attribute] === currentValue) continue;
+      if (!inspectAttributeValues(baseline, rule, attribute, [currentValue]).changed) continue;
+      emit(element, "attribute-changed", rule.id, rule.selector, attribute);
+      if (!canContinueBatch()) return;
+    }
+
+    if (!rule.watchText) {
+      rememberCurrentState(element, rule);
+      return;
+    }
+    const textMutation = (record: MutationRecord): boolean =>
+      (record.type === "characterData" || record.type === "childList") &&
+      (record.target === element || element.contains(record.target));
+    const hasTextRecord = onlyUnrecordedChanges
+      ? records.some(textMutation)
+      : records.some((record, index) => index > addedRecordIndex && textMutation(record));
+    if (hasTextRecord) {
+      rememberCurrentState(element, rule);
+      return;
+    }
+    const text = normalizeText(element.textContent);
+    if (previous.text !== text && !isExpectedText(baseline, rule, text)) {
+      emit(element, "text-changed", rule.id, rule.selector);
+    }
+    rememberCurrentState(element, rule);
+  };
+
+  const reportAdded = (
+    node: Node,
+    records: readonly MutationRecord[],
+    addedRecordIndex: number,
+    returnedFromThisAdd: WeakSet<Element>,
+  ): void => {
     for (const element of elementsIn(node)) {
+      if (!isInScope(element)) continue;
       for (const selector of riskySelectors) {
         if (!element.matches(selector) || baselineRisky.has(element) || seenRisky.has(element)) continue;
         seenRisky.add(element);
@@ -185,11 +296,29 @@ export function createSentinel(options: SentinelOptions): SentinelController {
         if (!element.matches(rule.selector)) continue;
         const active = activeRules.get(element);
         const known = fingerprints.get(element)?.has(rule.id) ?? false;
-        if (active?.has(rule.id)) continue;
+        if (active?.has(rule.id)) {
+          reconcileReactivatedElement(
+            element,
+            rule,
+            records,
+            addedRecordIndex,
+            !returnedFromThisAdd.has(element),
+          );
+          if (!canContinueBatch()) return;
+          continue;
+        }
         if (!known) storeBaseline(element, rule);
-        else active?.add(rule.id);
+        else {
+          let activeSet = activeRules.get(element);
+          if (!activeSet) {
+            activeSet = new Set();
+            activeRules.set(element, activeSet);
+          }
+          activeSet.add(rule.id);
+        }
         emit(element, "protected-element-added", rule.id, rule.selector);
         if (!canContinueBatch()) return;
+        if (known) reconcileReactivatedElement(element, rule, records, addedRecordIndex, false);
       }
     }
   };
@@ -205,8 +334,12 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     return matches;
   };
 
-  const findRoot = (element: Element): Element | undefined =>
-    roots.find((root) => root === element || root.contains(element));
+  const findRoot = (element: Element): Element | undefined => {
+    const containingRoots = roots.filter((root) => root === element || root.contains(element));
+    return containingRoots.find((root) =>
+      !containingRoots.some((candidate) => candidate !== root && candidate.contains(root)),
+    );
+  };
 
   const updateSelectorMembership = (subtree: Element): void => {
     if (!findRoot(subtree)) return;
@@ -230,18 +363,25 @@ export function createSentinel(options: SentinelOptions): SentinelController {
           }
           emit(element, "protected-element-added", rule.id, rule.selector);
           if (!canContinueBatch()) return;
+          rememberCurrentState(element, rule);
         } else if (!matches && isActive) {
           active?.delete(rule.id);
           emit(element, "protected-element-unmatched", rule.id, rule.selector);
           if (!canContinueBatch()) return;
+          rememberCurrentState(element, rule);
         }
       }
     }
   };
 
-  const processAttribute = (record: MutationRecord, element: Element, nextValue: string | null): void => {
+  const processAttribute = (
+    record: MutationRecord,
+    element: Element,
+    nextValue: string | null,
+    temporarilyOutOfScope: WeakSet<Element>,
+  ): void => {
     const attribute = record.attributeName;
-    if (!attribute) return;
+    if (!attribute || temporarilyOutOfScope.has(element)) return;
     for (const rule of options.rules) {
       if (!canContinueBatch()) return;
       if (!activeRules.get(element)?.has(rule.id)) continue;
@@ -249,15 +389,26 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       const baseline = fingerprints.get(element)?.get(rule.id);
       if (!baseline) continue;
       const current = element.getAttribute(attribute);
-      if (!inspectAttributeValues(baseline, rule, attribute, [current]).changed) continue;
-      if (record.oldValue === nextValue) continue;
-      if (!inspectAttributeValues(baseline, rule, attribute, [nextValue]).changed) continue;
-      emit(element, "attribute-changed", rule.id, rule.selector, attribute);
-      if (!canContinueBatch()) return;
+      const currentIsUnexpected = inspectAttributeValues(baseline, rule, attribute, [current]).changed;
+      const nextIsUnexpected = inspectAttributeValues(baseline, rule, attribute, [nextValue]).changed;
+      if (currentIsUnexpected && record.oldValue !== nextValue && nextIsUnexpected) {
+        emit(element, "attribute-changed", rule.id, rule.selector, attribute);
+        if (!canContinueBatch()) return;
+      }
+      // If the element ends this batch outside the roots and no later record
+      // establishes an in-scope value, do not accept its final detached state.
+      if (isInScope(element) || nextValue !== current) {
+        rememberAttributeState(element, rule, attribute, nextValue);
+      }
     }
   };
 
-  const processTextMutation = (record: MutationRecord): void => {
+  const processTextMutation = (
+    record: MutationRecord,
+    temporarilyOutOfScope: WeakSet<Element>,
+    elementsWithTemporaryExit: WeakSet<Element>,
+    returnedFromScope: WeakSet<Element>,
+  ): void => {
     if (!canContinueBatch()) return;
     for (const rule of options.rules) {
       if (!canContinueBatch()) return;
@@ -267,12 +418,16 @@ export function createSentinel(options: SentinelOptions): SentinelController {
         : record.target.parentElement ?? roots[0]!);
       if (!boundary) continue;
       for (const element of protectedAncestors(record.target, rule, boundary)) {
+        if (temporarilyOutOfScope.has(element)) continue;
+        if (elementsWithTemporaryExit.has(element) && !returnedFromScope.has(element)) continue;
         const baseline = fingerprints.get(element)?.get(rule.id);
         if (!baseline) continue;
         const text = normalizeText(element.textContent);
-        if (isExpectedText(baseline, rule, text)) continue;
-        emit(element, "text-changed", rule.id, rule.selector);
-        if (!canContinueBatch()) return;
+        if (!isExpectedText(baseline, rule, text)) {
+          emit(element, "text-changed", rule.id, rule.selector);
+          if (!canContinueBatch()) return;
+        }
+        if (isInScope(element)) rememberTextState(element, rule, text);
       }
     }
   };
@@ -305,30 +460,64 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       }
     }
 
+    const temporarilyOutOfScope = new WeakSet<Element>();
+    const elementsWithTemporaryExit = new WeakSet<Element>();
+    const returnedFromScope = new WeakSet<Element>();
+    for (const record of records) {
+      if (record.type !== "childList") continue;
+      for (const node of record.removedNodes) {
+        for (const element of elementsIn(node)) {
+          if (isInScope(element) && !isRetainedByRootInsideSubtree(node, element)) {
+            elementsWithTemporaryExit.add(element);
+          }
+        }
+      }
+    }
+
     const membershipSubtrees = new Set<Element>();
     flushing = true;
     abortCurrentBatch = false;
     try {
-      for (const record of records) {
+      for (const [recordIndex, record] of records.entries()) {
         if (!canContinueBatch()) return;
         if (record.type === "attributes" && record.target.nodeType === 1) {
           const element = record.target as Element;
           const nextValue = nextAttributeValues.has(record)
             ? nextAttributeValues.get(record) ?? null
             : element.getAttribute(record.attributeName ?? "");
-          processAttribute(record, element, nextValue);
+          processAttribute(record, element, nextValue, temporarilyOutOfScope);
           membershipSubtrees.add(element);
         }
-        if (record.type === "characterData" || record.type === "childList") processTextMutation(record);
+        if (record.type === "characterData" || record.type === "childList") {
+          processTextMutation(
+            record,
+            temporarilyOutOfScope,
+            elementsWithTemporaryExit,
+            returnedFromScope,
+          );
+        }
         if (!canContinueBatch()) return;
         if (record.type === "childList") {
           for (const node of record.removedNodes) {
+            for (const element of elementsIn(node)) {
+              if (!isRetainedByRootInsideSubtree(node, element)) temporarilyOutOfScope.add(element);
+            }
             reportRemoved(node);
             if (!canContinueBatch()) return;
+            if (node.nodeType === 1 && isInScope(node as Element)) membershipSubtrees.add(node as Element);
           }
           for (const node of record.addedNodes) {
-            reportAdded(node);
+            const returnedFromThisAdd = new WeakSet<Element>();
+            if (isWithinSuppliedRoot(record.target)) {
+              for (const element of elementsIn(node)) {
+                if (!temporarilyOutOfScope.delete(element)) continue;
+                returnedFromThisAdd.add(element);
+                returnedFromScope.add(element);
+              }
+            }
+            reportAdded(node, records, recordIndex, returnedFromThisAdd);
             if (!canContinueBatch()) return;
+            if (node.nodeType === 1 && isInScope(node as Element)) membershipSubtrees.add(node as Element);
           }
         }
       }
@@ -352,8 +541,8 @@ export function createSentinel(options: SentinelOptions): SentinelController {
   };
 
   establishBaseline();
-  for (const root of observationRoots) {
-    const observer = new MutationObserver((records) => enqueue(records));
+  const observer = new MutationObserver((records) => enqueue(records));
+  for (const root of roots) {
     observer.observe(root, {
       subtree: true,
       childList: true,
@@ -362,8 +551,8 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       characterData: true,
       characterDataOldValue: true,
     });
-    observers.push(observer);
   }
+  observers.push(observer);
 
   return {
     refresh(): void {

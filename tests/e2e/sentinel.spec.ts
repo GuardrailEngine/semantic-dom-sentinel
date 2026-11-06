@@ -13,6 +13,12 @@ declare global {
     };
     __sentinelAlerts: SentinelAlert[];
     __sentinelController: SentinelController;
+    __sentinelTestRoots: {
+      outer: HTMLElement;
+      inner: HTMLElement;
+      destination: HTMLElement;
+      button: HTMLButtonElement;
+    };
   }
 }
 
@@ -203,5 +209,140 @@ test("nested roots do not duplicate mutations and separate same-key events remai
   expect(alerts.filter((alert) => alert.ruleId === "all-buttons")).toHaveLength(2);
   expect(alerts.filter((alert) => alert.ruleId === "payment-button")).toHaveLength(2);
   expect(new Set(alerts.map((alert) => alert.targetId)).size).toBe(1);
+  expect(attemptedRequests).toEqual([]);
+});
+
+test("keeps detached roots monitored and reconciles elements that leave and re-enter the roots union", async ({ page }) => {
+  const attemptedRequests: string[] = [];
+  await prepare(page, `
+    <main id="app"><section id="inner"><button class="pay" type="submit">Pay</button></section></main>
+    <aside id="destination"></aside>
+  `, attemptedRequests);
+
+  await page.evaluate(() => {
+    window.__sentinelController.stop();
+    window.__sentinelAlerts = [];
+    const outer = document.querySelector<HTMLElement>("#app");
+    const inner = document.querySelector<HTMLElement>("#inner");
+    const destination = document.querySelector<HTMLElement>("#destination");
+    if (!outer || !inner || !destination) throw new Error("Missing root fixture");
+    window.__sentinelController = window.SemanticDomSentinel.createSentinel({
+      roots: [inner, outer, destination],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"], watchText: true }],
+      onAlert: (alert) => window.__sentinelAlerts.push(alert),
+    });
+
+    const button = document.querySelector<HTMLButtonElement>("button.pay");
+    if (!button) throw new Error("Missing protected button");
+    window.__sentinelTestRoots = { outer, inner, destination, button };
+    inner.remove();
+    button.setAttribute("type", "button");
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(1);
+  expect((await page.evaluate(() => window.__sentinelAlerts)).map((alert) => alert.reason))
+    .toEqual(["attribute-changed"]);
+
+  await page.evaluate(() => {
+    const { inner, outer } = window.__sentinelTestRoots;
+    outer.append(inner);
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+  expect(await page.evaluate(() => window.__sentinelAlerts.length)).toBe(1);
+
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>("button.pay");
+    if (!button) throw new Error("Missing protected button");
+    document.body.append(button);
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(2);
+  expect((await page.evaluate(() => window.__sentinelAlerts)).map((alert) => alert.reason))
+    .toEqual(["attribute-changed", "protected-element-removed"]);
+
+  await page.evaluate(() => {
+    document.querySelector<HTMLButtonElement>("button.pay")!.setAttribute("type", "reset");
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+  expect(await page.evaluate(() => window.__sentinelAlerts.length)).toBe(2);
+
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>("button.pay");
+    const destination = document.querySelector<HTMLElement>("#destination");
+    if (!button || !destination) throw new Error("Missing return fixture");
+    destination.append(button);
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(4);
+  const alerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(alerts.map((alert) => alert.reason)).toEqual([
+    "attribute-changed",
+    "protected-element-removed",
+    "protected-element-added",
+    "attribute-changed",
+  ]);
+  expect(new Set(alerts.map((alert) => alert.targetId)).size).toBe(1);
+
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>("button.pay");
+    const outer = document.querySelector<HTMLElement>("#app");
+    if (!button || !outer) throw new Error("Missing cross-root move fixture");
+    outer.append(button);
+    button.setAttribute("type", "button");
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(5);
+  const finalAlerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(finalAlerts.map((alert) => alert.reason)).toEqual([
+    "attribute-changed",
+    "protected-element-removed",
+    "protected-element-added",
+    "attribute-changed",
+    "attribute-changed",
+  ]);
+  expect(finalAlerts[4]?.targetId).toBe(finalAlerts[0]?.targetId);
+  expect(JSON.stringify(finalAlerts)).not.toContain("reset");
+
+  await page.evaluate(() => {
+    const { button } = window.__sentinelTestRoots;
+    button.setAttribute("type", "reset");
+    document.body.append(button);
+    button.setAttribute("type", "button");
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(7);
+  const exitAlerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(exitAlerts.slice(5).map((alert) => alert.reason)).toEqual([
+    "attribute-changed",
+    "protected-element-removed",
+  ]);
+
+  await page.evaluate(() => {
+    const { button, destination } = window.__sentinelTestRoots;
+    destination.append(button);
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(9);
+  const returnAlerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(returnAlerts.slice(5).map((alert) => alert.reason)).toEqual([
+    "attribute-changed",
+    "protected-element-removed",
+    "protected-element-added",
+    "attribute-changed",
+  ]);
+  expect(returnAlerts[8]?.targetId).toBe(returnAlerts[5]?.targetId);
+  expect(JSON.stringify(returnAlerts)).not.toContain("reset");
+
+  await page.evaluate(() => {
+    const { button, destination, outer } = window.__sentinelTestRoots;
+    destination.removeChild(button);
+    button.setAttribute("type", "submit");
+    button.setAttribute("type", "reset");
+    outer.append(button);
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(10);
+  const batchReturnAlerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(batchReturnAlerts.slice(9).map((alert) => alert.reason)).toEqual(["attribute-changed"]);
+
+  await page.evaluate(() => {
+    window.__sentinelTestRoots.button.setAttribute("type", "button");
+  });
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(11);
+  expect((await page.evaluate(() => window.__sentinelAlerts)).slice(9).map((alert) => alert.reason))
+    .toEqual(["attribute-changed", "attribute-changed"]);
   expect(attemptedRequests).toEqual([]);
 });

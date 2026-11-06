@@ -205,7 +205,11 @@ const detailsRule = {
 
 ### Manage the lifecycle deliberately
 
-`createSentinel()` takes a synchronous snapshot of the current DOM under the supplied roots before observation begins. Existing matching elements and their current watched state are accepted as the baseline; this is not a trust or integrity check. When supplied roots overlap, only their outermost roots are observed so one mutation is not delivered twice, while all supplied roots remain part of the baseline and logical scope.
+`createSentinel()` takes a synchronous snapshot of the current DOM under the supplied roots before observation begins. Existing matching elements and their current watched state are accepted as the baseline; this is not a trust or integrity check. The controller copies and deduplicates the supplied `Element` roots at creation. That set is fixed for the controller's lifetime: replacing a root does not add the replacement, so stop and recreate the controller when the application changes its root set.
+
+The same `MutationObserver` observes every supplied root, including nested roots. This keeps an explicitly supplied nested root monitored if it is detached from its former parent, while overlapping registrations still deliver one record per mutation to that observer. The union of the supplied roots defines scope, regardless of whether a root is connected to the document. A protected element moved between supplied roots remains in scope and does not produce a removal/addition pair solely because of the move. Root-list order does not affect the scope boundary.
+
+A non-root protected element that leaves all supplied roots is reported as removed. If it later returns, it is reported as added and its current watched attributes and opted-in text are compared with the last fingerprint observed while it was in scope; differences are not silently accepted as a new baseline. While that element is outside all roots, its intermediate state transitions cannot be reconstructed; only the state observed on return can be compared. If it leaves and returns before the pending mutation batch is processed, membership is evaluated at the batch's final state, so no removal/addition pair is emitted when it ends within the roots union. Use `refresh()` only when the application intentionally accepts a new state.
 
 | Method | Behavior |
 | --- | --- |

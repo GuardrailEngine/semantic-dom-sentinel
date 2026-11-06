@@ -51,7 +51,7 @@ export interface SentinelAlert {
 }
 
 export interface SentinelOptions {
-  /** Sensitive roots chosen by the application after hydration. */
+  /** Sensitive roots chosen after hydration; this set is fixed per controller and detached roots remain in scope. Recreate the controller when the root set changes. */
   roots: readonly Element[];
   rules: readonly ProtectionRule[];
   onAlert: (alert: SentinelAlert) => void;
