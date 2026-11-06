@@ -75,6 +75,21 @@ npm install /absolute/path/to/semantic-dom-sentinel-0.1.0.tgz
 
 The build generates ESM, CommonJS, a browser IIFE bundle at `dist/index.global.js`, and TypeScript declarations. These are local build outputs; they are not prebuilt files in the repository. The runtime package has no runtime dependencies.
 
+### Package entry points
+
+Bundlers should import from the package root. The `browser` export condition and the legacy `browser` field both select the browser-compatible ESM build at `dist/index.js`; Node ESM and CommonJS consumers use their corresponding builds, and TypeScript uses the declaration file. The `exports` map intentionally exposes only the package root.
+
+For a page without a bundler, load the IIFE as a regular script. It exposes `window.SemanticDomSentinel`; do not import this IIFE as an ES module:
+
+```html
+<script src="/node_modules/semantic-dom-sentinel/dist/index.global.js"></script>
+<script>
+  const { createSentinel } = window.SemanticDomSentinel;
+</script>
+```
+
+The `unpkg` and `jsdelivr` package fields point to the same IIFE for direct CDN script loading after the package is published. They are not module entry points.
+
 ## Quick start
 
 Call this only after your application has finished hydration and established its intended trusted state. The example assumes a `#checkout-root` containing a `form[data-checkout]` and a `button[data-payment-submit]`.
