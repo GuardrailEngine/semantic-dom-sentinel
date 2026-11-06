@@ -14,6 +14,8 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -28,7 +30,5 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
-      - name: Install Chromium for browser tests
-        run: npx playwright install --with-deps chromium
       - name: Browser integration and network-boundary tests
         run: npm run test:e2e
