@@ -39,7 +39,7 @@ export interface ProtectionRule {
 export interface SentinelAlert {
   /** Monotonic, per-controller identifier; it contains no DOM or user content. */
   id: number;
-  /** Opaque identifier for the affected node within this controller's lifetime. */
+  /** Opaque identifier stable for the same Element across refresh and reinsertion; replacement Elements get distinct identifiers. */
   targetId: string;
   reason: SentinelReason;
   ruleId: string;
@@ -60,9 +60,9 @@ export interface SentinelOptions {
 }
 
 export interface SentinelController {
-  /** Re-capture the current DOM as an intentional new baseline. */
+  /** Accept the current DOM as a new baseline; unreported older mutations are absorbed without alerts. */
   refresh(): void;
-  /** Disconnect observers and discard queued work. Safe to call more than once. */
+  /** Disconnect observers and discard queued work; safe to call more than once. */
   stop(): void;
 }
 

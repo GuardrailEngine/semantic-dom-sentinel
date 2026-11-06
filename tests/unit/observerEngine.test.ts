@@ -61,7 +61,7 @@ describe("observerEngine resilience and lifecycle", () => {
     ]);
   });
 
-  it("refreshes the baseline, stops idempotently, and rejects refresh after stop", async () => {
+  it("absorbs a pending mutation at refresh and observes from the new baseline", async () => {
     const root = rootWith('<button class="pay" type="submit">Pay</button>');
     const alerts: SentinelAlert[] = [];
     const controller = startMonitoring(root, (alert) => alerts.push(alert));
@@ -69,20 +69,86 @@ describe("observerEngine resilience and lifecycle", () => {
 
     button.setAttribute("type", "button");
     controller.refresh();
+    await tick();
+    expect(alerts).toHaveLength(0);
+
     button.setAttribute("type", "reset");
     await tick();
 
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.reason).toBe("attribute-changed");
     expect(alerts[0]?.attribute).toBe("type");
+  });
 
-    controller.stop();
-    controller.stop();
-    button.setAttribute("type", "submit");
+  it("absorbs a mutation already enqueued before refresh runs", async () => {
+    const root = rootWith('<button class="pay" type="submit">Pay</button>');
+    const alerts: SentinelAlert[] = [];
+    const controller = startMonitoring(root, (alert) => alerts.push(alert));
+    const button = root.querySelector("button")!;
+
+    button.setAttribute("type", "button");
+    await Promise.resolve();
+    controller.refresh();
     await tick();
+    expect(alerts).toHaveLength(0);
 
+    button.setAttribute("type", "reset");
+    await tick();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.attribute).toBe("type");
+  });
+
+  it("refresh inside onAlert completes the current alert and abandons the rest of its batch", async () => {
+    const root = rootWith('<button class="pay" type="submit">First</button><button class="pay" type="submit">Second</button>');
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [root],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => {
+        alerts.push(alert);
+        if (alerts.length === 1) controller.refresh();
+      },
+    });
+    controllers.push(controller);
+    const buttons = root.querySelectorAll("button");
+
+    buttons[0]!.setAttribute("type", "button");
+    buttons[1]!.setAttribute("type", "button");
+    await tick();
+    expect(alerts).toHaveLength(1);
+
+    buttons[1]!.setAttribute("type", "reset");
+    await tick();
+    expect(alerts).toHaveLength(2);
+    expect(alerts[1]?.reason).toBe("attribute-changed");
+  });
+
+  it("stop inside onAlert completes the current alert and abandons the rest of its batch", async () => {
+    const root = rootWith('<button class="pay" type="submit">First</button><button class="pay" type="submit">Second</button>');
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [root],
+      rules: [{ id: "payment-button", selector: "button.pay", watchAttributes: ["type"] }],
+      onAlert: (alert) => {
+        alerts.push(alert);
+        if (alerts.length === 1) controller.stop();
+      },
+    });
+    controllers.push(controller);
+    const buttons = root.querySelectorAll("button");
+
+    buttons[0]!.setAttribute("type", "button");
+    buttons[1]!.setAttribute("type", "button");
+    await tick();
+    expect(alerts).toHaveLength(1);
+
+    controller.stop();
+    buttons[1]!.setAttribute("type", "reset");
+    await tick();
     expect(alerts).toHaveLength(1);
     expect(() => controller.refresh()).toThrow("Cannot refresh a stopped Semantic DOM Sentinel controller.");
+
+    controller.stop();
   });
 });
 

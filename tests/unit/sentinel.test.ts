@@ -59,6 +59,120 @@ describe("deterministic DOM monitoring", () => {
     expect(JSON.stringify(alerts)).not.toContain("private");
   });
 
+  it("uses the current matched DOM as a synchronous baseline without a retroactive alert", async () => {
+    const root = rootWith('<button class="pay" type="button">Pay</button>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts);
+
+    await tick();
+    expect(alerts).toHaveLength(0);
+    root.querySelector("button")!.setAttribute("type", "reset");
+    await tick();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.attribute).toBe("type");
+  });
+
+  it("uses the final value for an A-to-B-to-A attribute batch", async () => {
+    const root = rootWith('<button class="pay" type="submit">Pay</button>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts);
+    const button = root.querySelector("button")!;
+
+    button.setAttribute("type", "button");
+    button.setAttribute("type", "submit");
+    button.textContent = "Transient label";
+    button.textContent = "Pay";
+    await tick();
+
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("does not merge separate unexpected attribute events in one batch", async () => {
+    const root = rootWith('<button class="pay" type="submit">Pay</button>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts);
+    const button = root.querySelector("button")!;
+
+    button.setAttribute("type", "button");
+    button.setAttribute("type", "reset");
+    await tick();
+
+    expect(alerts).toHaveLength(2);
+    expect(alerts.map((alert) => alert.attribute)).toEqual(["type", "type"]);
+    expect(alerts[0]?.targetId).toBe(alerts[1]?.targetId);
+  });
+
+  it("preserves the absent attribute state between distinct events in a batch", async () => {
+    const root = rootWith('<button class="pay">Pay</button>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts);
+    const button = root.querySelector("button")!;
+
+    button.setAttribute("type", "button");
+    button.removeAttribute("type");
+    button.setAttribute("type", "reset");
+    await tick();
+
+    expect(alerts).toHaveLength(2);
+    expect(alerts.map((alert) => alert.attribute)).toEqual(["type", "type"]);
+  });
+
+  it("observes nested roots once while keeping different rules independent", async () => {
+    const outer = rootWith('<section><button class="pay" type="submit">Pay</button></section>');
+    const inner = outer.querySelector("section")!;
+    const alerts: SentinelAlert[] = [];
+    const controller = createSentinel({
+      roots: [outer, inner],
+      rules: [
+        { id: "all-buttons", selector: "button", watchAttributes: ["type"] },
+        { id: "payment-button", selector: "button.pay", watchAttributes: ["type"] },
+      ],
+      onAlert: (alert) => alerts.push(alert),
+    });
+    controllers.push(controller);
+
+    outer.querySelector("button")!.setAttribute("type", "button");
+    await tick();
+
+    expect(alerts).toHaveLength(2);
+    expect(alerts.map((alert) => alert.ruleId)).toEqual(["all-buttons", "payment-button"]);
+    expect(alerts[0]?.targetId).toBe(alerts[1]?.targetId);
+  });
+
+  it("keeps a node targetId across refresh and reinsertion but assigns replacements a new one", async () => {
+    const root = rootWith('<button class="pay" type="submit">Pay</button>');
+    const alerts: SentinelAlert[] = [];
+    const controller = monitor(root, alerts);
+    const original = root.querySelector("button")!;
+
+    original.setAttribute("type", "button");
+    await tick();
+    const originalTargetId = alerts[0]?.targetId;
+    expect(originalTargetId).toBeDefined();
+
+    controller.refresh();
+    original.setAttribute("type", "reset");
+    await tick();
+    expect(alerts[1]?.targetId).toBe(originalTargetId);
+
+    original.remove();
+    await tick();
+    root.append(original);
+    await tick();
+    expect(alerts.find((alert) => alert.reason === "protected-element-added")?.targetId).toBe(originalTargetId);
+
+    original.remove();
+    await tick();
+    const replacement = document.createElement("button");
+    replacement.className = "pay";
+    replacement.type = "reset";
+    root.append(replacement);
+    await tick();
+    const replacementTargetId = alerts.filter((alert) => alert.reason === "protected-element-added").at(-1)?.targetId;
+    expect(replacementTargetId).toBeDefined();
+    expect(replacementTargetId).not.toBe(originalTargetId);
+  });
+
   it("allows configured expected values and ignores unmonitored attributes", async () => {
     const root = rootWith('<button class="pay" aria-expanded="false">Pay</button>');
     const alerts: SentinelAlert[] = [];
@@ -159,7 +273,7 @@ describe("deterministic DOM monitoring", () => {
     await tick();
     root.append(button, frame);
     await tick();
-    button.setAttribute("formaction", "/changed");
+    button.setAttribute("formaction", "/changed-again");
     await tick();
 
     expect(alerts.filter((alert) => alert.reason === "attribute-changed")).toHaveLength(2);
