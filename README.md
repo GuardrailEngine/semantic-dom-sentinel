@@ -11,9 +11,9 @@ A **TypeScript browser library for deterministic DOM integrity monitoring**. Sel
 [![CI](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/ci.yml)
 [![Coverage workflow](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/GuardrailEngine/semantic-dom-sentinel/actions/workflows/coverage.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
-[![Status: Early MVP](https://img.shields.io/badge/Status-Early_MVP-amber.svg)](#security-and-privacy)
+[![Status: Early MVP](https://img.shields.io/badge/Status: Early_MVP-amber.svg)](#security-and-privacy)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Alert reference](#alert-reference) · [Security & privacy](#security-and-privacy) · [Contribute](CONTRIBUTING.md)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Alert reference](#alert-reference) · [Detection corpus](docs/detection-corpus.md) · [Security & privacy](#security-and-privacy) · [Contribute](CONTRIBUTING.md)
 
 > [!IMPORTANT]
 > **Observability, not prevention.** This early MVP is a monitoring signal, not a security boundary. It does not block attacks, repair markup, or replace CSP, Trusted Types, secure coding, or server-side controls.
@@ -239,14 +239,14 @@ npm ci
 npm run lint
 npm run typecheck
 npm test
-npx playwright install chromium
+npx playwright install
 npm run test:e2e
 npm run build
 ```
 
-The tests exercise baseline capture, allowlists, attribute/text changes, selector membership, element additions/removals, repeated mutations, SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. Performance smoke tests use an **8,000-element tree** and a **1,000-mutation synchronous batch**. These are test workloads, not a published latency benchmark or a guarantee of production performance.
+The tests exercise baseline capture, allowlists, attribute/text changes, selector membership, element additions/removals, repeated mutations, SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. The synthetic [detection corpus](docs/detection-corpus.md) checks classified alert and no-alert cases in Chromium, Firefox, and WebKit, and records browser timing observations with their limits. Performance smoke tests use an **8,000-element tree** and a **1,000-mutation synchronous batch**; these workloads are not production performance guarantees.
 
-The [CI workflow](.github/workflows/ci.yml) runs lint, typecheck, and Chromium integration tests. The separate [coverage workflow](.github/workflows/coverage.yml) runs the unit and performance suite with coverage enabled and retains the report as a downloadable Actions artifact for 14 days. Its badge reports workflow status, **not a coverage percentage**.
+The [CI workflow](.github/workflows/ci.yml) runs lint, typecheck, and Playwright integration tests in Chromium, Firefox, and WebKit. The separate [coverage workflow](.github/workflows/coverage.yml) runs the unit and performance suite with coverage enabled and retains the report as a downloadable Actions artifact for 14 days. Its badge reports workflow status, **not a coverage percentage**.
 
 ## Help shape the signals
 
