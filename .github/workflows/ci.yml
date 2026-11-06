@@ -32,3 +32,5 @@ jobs:
         run: npm run typecheck
       - name: Browser integration and network-boundary tests
         run: npm run test:e2e
+        env:
+          HOME: /root
