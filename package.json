@@ -49,7 +49,8 @@
     "test:unit": "vitest run tests/unit",
     "test:perf": "vitest run tests/performance",
     "test:e2e": "npm run build && playwright test",
-    "test:all": "npm run lint && npm run typecheck && npm run test:coverage && npm run test:e2e"
+    "test:package": "npm run build && node scripts/test-package-consumer.mjs",
+    "test:all": "npm run lint && npm run typecheck && npm run test:coverage && npm run test:e2e && npm run test:package"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

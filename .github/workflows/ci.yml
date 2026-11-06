@@ -30,6 +30,8 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      - name: Packed package consumer smoke
+        run: npm run test:package
       - name: Browser integration and network-boundary tests
         run: npm run test:e2e
         env:
