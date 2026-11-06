@@ -13,7 +13,7 @@ A **TypeScript browser library for deterministic DOM integrity monitoring**. Sel
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
 [![Status: Early MVP](https://img.shields.io/badge/Status: Early_MVP-amber.svg)](#security-and-privacy)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Alert reference](#alert-reference) · [Detection corpus](docs/detection-corpus.md) · [Security & privacy](#security-and-privacy) · [Contribute](CONTRIBUTING.md)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Alert reference](#alert-reference) · [Detection corpus](docs/detection-corpus.md) · [Security & privacy](#security-and-privacy) · [Contribute](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Release policy](docs/releasing.md)
 
 > [!IMPORTANT]
 > **Observability, not prevention.** This early MVP is a monitoring signal, not a security boundary. It does not block attacks, repair markup, or replace CSP, Trusted Types, secure coding, or server-side controls.
