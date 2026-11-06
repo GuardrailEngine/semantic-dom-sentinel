@@ -242,7 +242,10 @@ npm test
 npx playwright install
 npm run test:e2e
 npm run build
+npm run test:package
 ```
+
+The package smoke test builds and packs locally, installs the archive in a clean temporary consumer, and checks ESM, CommonJS, browser resolution, TypeScript declarations, and the classic browser IIFE. It does not publish the package.
 
 The tests exercise baseline capture, allowlists, attribute/text changes, selector membership, element additions/removals, repeated mutations, SPA-style updates, payment controls, injected iframes, and a network-boundary assertion. The synthetic [detection corpus](docs/detection-corpus.md) checks classified alert and no-alert cases in Chromium, Firefox, and WebKit, and records browser timing observations with their limits. Performance smoke tests use an **8,000-element tree** and a **1,000-mutation synchronous batch**; these workloads are not production performance guarantees.
 
