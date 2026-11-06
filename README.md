@@ -67,11 +67,14 @@ npm run build
 npm pack
 ```
 
-Install the generated tarball in your application. Replace the example path with its actual location:
+`npm pack` creates `semantic-dom-sentinel-0.1.0.tgz` in the repository root. To install it in your application, run the install command from the application's directory. For example, if the application and cloned repository are sibling directories named `my-app` and `semantic-dom-sentinel`:
 
 ```sh
-npm install /absolute/path/to/semantic-dom-sentinel-0.1.0.tgz
+cd ../my-app
+npm install ../semantic-dom-sentinel/semantic-dom-sentinel-0.1.0.tgz
 ```
+
+If the directories are elsewhere, use the path to the generated tarball from your application directory.
 
 The build generates ESM, CommonJS, a browser IIFE bundle at `dist/index.global.js`, and TypeScript declarations. These are local build outputs; they are not prebuilt files in the repository. The runtime package has no runtime dependencies.
 
