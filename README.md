@@ -91,8 +91,6 @@ For a page without a bundler, load the IIFE as a regular script. It exposes `win
 </script>
 ```
 
-The `unpkg` and `jsdelivr` package fields point to the same IIFE for direct CDN script loading after the package is published. They are not module entry points.
-
 ## Quick start
 
 Call this only after your application has finished hydration and established its intended trusted state. The example assumes a `#checkout-root` containing a `form[data-checkout]` and a `button[data-payment-submit]`.

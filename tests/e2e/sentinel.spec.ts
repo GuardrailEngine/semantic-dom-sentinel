@@ -106,6 +106,45 @@ test("monitors SPA payment changes and injected iframes while making no network 
   expect(attemptedRequests).toEqual([]);
 });
 
+test("reconciles sibling-dependent selector membership after insertion and removal", async ({ page }) => {
+  await page.setContent('<main id="app"><div><button id="first"></button><button id="second"></button></div></main>');
+  await page.addScriptTag({ content: bundle });
+  await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>("#app");
+    const first = document.querySelector<HTMLButtonElement>("#first");
+    if (!root || !first) throw new Error("Missing sibling-selector fixture");
+    window.__sentinelAlerts = [];
+    window.__sentinelController = window.SemanticDomSentinel.createSentinel({
+      roots: [root],
+      rules: [{ id: "second-button", selector: "button:nth-child(2)" }],
+      onAlert: (alert) => window.__sentinelAlerts.push(alert),
+    });
+    first.remove();
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(1);
+  const removalAlerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(removalAlerts.map((alert) => alert.reason)).toEqual(["protected-element-unmatched"]);
+
+  await page.evaluate(() => {
+    const second = document.querySelector<HTMLButtonElement>("#second");
+    if (!second?.parentElement) throw new Error("Missing remaining sibling");
+    const first = document.createElement("button");
+    second.parentElement.insertBefore(first, second);
+    if (!second.matches("button:nth-child(2)") || first.matches("button:nth-child(2)")) {
+      throw new Error("Browser did not apply the expected sibling selector state");
+    }
+  });
+
+  await expect.poll(() => page.evaluate(() => window.__sentinelAlerts.length)).toBe(2);
+  const alerts = await page.evaluate(() => window.__sentinelAlerts);
+  expect(alerts.map((alert) => alert.reason)).toEqual([
+    "protected-element-unmatched",
+    "protected-element-added",
+  ]);
+  expect(alerts[0]?.targetId).toBe(alerts[1]?.targetId);
+});
+
 test("alerts on mocked external fetch changes to the monitored DOM while blocking real network requests", async ({ page }) => {
   const fixtureUrl = "https://fixture.invalid/dom-change.json";
   const interceptedRequests: string[] = [];
