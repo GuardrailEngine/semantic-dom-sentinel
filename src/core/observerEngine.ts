@@ -341,6 +341,14 @@ export function createSentinel(options: SentinelOptions): SentinelController {
     );
   };
 
+  // One outermost root covers nested supplied roots without duplicating membership scans.
+  const outermostRootsContaining = (node: Node): Element[] => {
+    const containingRoots = roots.filter((root) => root === node || root.contains(node));
+    return containingRoots.filter((root) =>
+      !containingRoots.some((candidate) => candidate !== root && candidate.contains(root)),
+    );
+  };
+
   const updateSelectorMembership = (subtree: Element): void => {
     if (!findRoot(subtree)) return;
     const candidates = [subtree, ...subtree.querySelectorAll("*")];
@@ -474,7 +482,11 @@ export function createSentinel(options: SentinelOptions): SentinelController {
       }
     }
 
-    const membershipSubtrees = new Set<Element>();
+    // Selector matches can depend on ancestor, sibling, or relational state changed elsewhere in the root.
+    const membershipRoots = new Set<Element>();
+    const markMembershipForRecheck = (node: Node): void => {
+      for (const root of outermostRootsContaining(node)) membershipRoots.add(root);
+    };
     flushing = true;
     abortCurrentBatch = false;
     try {
@@ -486,9 +498,10 @@ export function createSentinel(options: SentinelOptions): SentinelController {
             ? nextAttributeValues.get(record) ?? null
             : element.getAttribute(record.attributeName ?? "");
           processAttribute(record, element, nextValue, temporarilyOutOfScope);
-          membershipSubtrees.add(element);
+          markMembershipForRecheck(record.target);
         }
         if (record.type === "characterData" || record.type === "childList") {
+          markMembershipForRecheck(record.target);
           processTextMutation(
             record,
             temporarilyOutOfScope,
@@ -504,7 +517,6 @@ export function createSentinel(options: SentinelOptions): SentinelController {
             }
             reportRemoved(node);
             if (!canContinueBatch()) return;
-            if (node.nodeType === 1 && isInScope(node as Element)) membershipSubtrees.add(node as Element);
           }
           for (const node of record.addedNodes) {
             const returnedFromThisAdd = new WeakSet<Element>();
@@ -517,13 +529,12 @@ export function createSentinel(options: SentinelOptions): SentinelController {
             }
             reportAdded(node, records, recordIndex, returnedFromThisAdd);
             if (!canContinueBatch()) return;
-            if (node.nodeType === 1 && isInScope(node as Element)) membershipSubtrees.add(node as Element);
           }
         }
       }
-      for (const subtree of membershipSubtrees) {
+      for (const root of membershipRoots) {
         if (!canContinueBatch()) return;
-        updateSelectorMembership(subtree);
+        updateSelectorMembership(root);
       }
     } finally {
       flushing = false;

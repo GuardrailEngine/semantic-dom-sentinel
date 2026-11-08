@@ -4,7 +4,11 @@ Notable, user-facing changes to Semantic DOM Sentinel are recorded here. This pr
 
 ## [Unreleased]
 
-<!-- Add concise user-facing entries under Added, Changed, Fixed, or Security. -->
+### Changed
+- Remove CDN package fields and guidance; distribution remains GitHub-only.
+
+### Fixed
+- Recheck selector membership across the affected root after observed DOM mutations, including sibling-position and relational selectors.
 
 ## [0.1.0] - 2026-11-07
 ### Added

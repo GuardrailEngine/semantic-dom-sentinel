@@ -517,6 +517,35 @@ describe("deterministic DOM monitoring", () => {
     expect(alerts.map((alert) => alert.reason)).toContain("attribute-changed");
   });
 
+  it("reconciles sibling-dependent selector membership after a sibling is removed", async () => {
+    const root = rootWith('<div><button id="first"></button><button id="second"></button></div>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts, [{ id: "second-button", selector: "button:nth-child(2)" }]);
+
+    root.querySelector("#first")!.remove();
+    await tick();
+    expect(alerts.map((alert) => alert.reason)).toEqual(["protected-element-unmatched"]);
+    expect(alerts[0]?.ruleId).toBe("second-button");
+  });
+
+  it("reconciles ancestor membership when a descendant attribute changes a relational selector", async () => {
+    const root = rootWith('<section><button></button></section>');
+    const alerts: SentinelAlert[] = [];
+    monitor(root, alerts, [{ id: "section-with-pay", selector: "section:has(button.pay)" }]);
+    const button = root.querySelector("button")!;
+
+    button.classList.add("pay");
+    await tick();
+    button.classList.remove("pay");
+    await tick();
+
+    expect(alerts.map((alert) => alert.reason)).toEqual([
+      "protected-element-added",
+      "protected-element-unmatched",
+    ]);
+    expect(alerts[0]?.targetId).toBe(alerts[1]?.targetId);
+  });
+
   it("re-alerts when the same protected or risky node is removed and reinserted", async () => {
     const root = rootWith('<button class="pay" formaction="/checkout">Pay</button><iframe></iframe>');
     const alerts: SentinelAlert[] = [];
