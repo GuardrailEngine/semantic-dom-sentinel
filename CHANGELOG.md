@@ -4,6 +4,8 @@ Notable, user-facing changes to Semantic DOM Sentinel are recorded here. This pr
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-08
+
 ### Changed
 - Remove CDN package fields and guidance; distribution remains GitHub-only.
 
